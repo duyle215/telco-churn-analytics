@@ -135,7 +135,7 @@
     'Bank transfer (automatic)': 'Chuyển khoản tự động', 'Credit card (automatic)': 'Thẻ tín dụng tự động',
   };
   const MIN_GROUP = 30;          // nhánh nhỏ hơn mức này thì tỷ lệ dao động mạnh: hiển thị mờ, không xếp hạng
-  const TOP_FACTORS = 5;
+  const TOP_FACTORS = 6;   // tối đa; số thực hiển thị tự co theo chiều cao panel (fitTopFactors)
 
   function valueLabel(factor, v) {
     if (factor === 'addons') return v === 'No internet service' ? 'Không dùng internet' : `${v} dịch vụ`;
@@ -182,7 +182,6 @@
         <div class="pills" id="exPills"></div>
         <div class="spacer"></div>
         <button class="btn ghost no-print" id="exClear" type="button">Xoá lọc</button>
-        <button class="btn no-print" id="exCustomers" type="button" title="Danh sách khách đang hoạt động trong nhóm, xuất CSV">${ICON.download}Danh sách khách</button>
       </div>
       <div class="headline" id="exHeadline"></div>
       <div class="grid kpis4" id="exKpis"></div>
@@ -193,10 +192,10 @@
           <div class="chart fill" id="ex-churn"></div>
         </div>
         <div class="card flex-card">
-          <div class="card-head"><div><h3 class="card-title">Yếu tố khác biệt nhất</h3>
-            <div class="card-sub">Nhánh rời đi nhiều nhất và ít nhất. Bấm để lọc.</div></div>
-            <button class="btn link no-print" id="exAll" type="button">Xem cả 13</button></div>
+          <div class="card-head"><div><h3 class="card-title">Yếu tố tác động mạnh nhất</h3>
+            <div class="card-sub">Trong nhóm đang chọn. Bấm một ô để lọc theo nhánh đó.</div></div></div>
           <div class="top-factors" id="exTop"></div>
+          <button class="btn block no-print" id="exAll" type="button">Xem đủ 13 yếu tố</button>
         </div>
       </div>`;
     mountChart('ex-churn', {});
@@ -212,7 +211,7 @@
       if (b) openPopover(b.dataset.pop, b);
     });
     $('#exClear').addEventListener('click', () => { ex.filters = {}; onFiltersChanged(); });
-    $('#exCustomers').addEventListener('click', openCustomerList);
+    $('#exKpis').addEventListener('click', (e) => { if (e.target.closest('#exCustomers')) openCustomerList(); });
     $('#exAll').addEventListener('click', openAllFactors);
     $('#exTop').addEventListener('click', (e) => {
       const v = e.target.closest('[data-f]');
@@ -230,8 +229,10 @@
       + PRESETS.map((p, i) => `<option value="${i}" ${i === match ? 'selected' : ''} title="${esc(p.hint || '')}">${esc(p.label)}</option>`).join('');
     const pill = (key, label) => {
       const vals = ex.filters[key] || [];
-      const text = vals.map((v) => valueLabel(key, v)).join(', ');
-      return `<span class="pill ${vals.length ? 'on' : ''}"><button type="button" data-pop="${key}" aria-haspopup="true">
+      // Một giá trị thì hiện tên, nhiều giá trị thì hiện số lượng: nút giữ độ rộng ổn định, thanh lọc không phải cuộn.
+      const text = vals.length === 1 ? valueLabel(key, vals[0]) : vals.length ? `${vals.length} lựa chọn` : '';
+      const full = vals.map((v) => valueLabel(key, v)).join(', ');
+      return `<span class="pill ${vals.length ? 'on' : ''}" title="${esc(full || 'Tất cả')}"><button type="button" data-pop="${key}" aria-haspopup="true">
         <span class="pill-k">${esc(label)}${text ? ':' : ''}</span> ${esc(text)} <span class="caret">▾</span></button>${vals.length ? `<button type="button" class="pill-x" data-rm="${key}" aria-label="Bỏ lọc ${esc(label)}">✕</button>` : ''}</span>`;
     };
     const others = ex.catalog.filter((c) => !MAIN_FACTORS.includes(c.key));
@@ -331,30 +332,36 @@
       + `${k.sel_customers < 100 ? ` ${badge('warn', 'nhóm dưới 100 khách, xem như tham khảo')}` : ''}</span>`;
 
     $('#exKpis').innerHTML = [
-      kpiCard('Khách trong nhóm', fmt.int(k.sel_customers), filtered ? `${fmt.pct(k.sel_customers / k.all_customers)} toàn công ty` : 'có tính cước trong 24 tháng'),
+      kpiCard('Khách trong nhóm', fmt.int(k.sel_customers), `${filtered ? fmt.pct(k.sel_customers / k.all_customers) + ' toàn công ty' : 'có tính cước'} · <button type="button" class="inline-link" id="exCustomers">Xem danh sách ›</button>`),
       kpiCard('Đã rời đi (24 tháng)', fmt.pct(selRate),
         filtered ? `${badge(lift > 1.05 ? 'bad' : lift < 0.95 ? 'good' : 'neutral', '×' + fmt.num(lift, 2), lift > 1.05 ? 'up' : lift < 0.95 ? 'down' : null)} so với mức chung` : `${fmt.int(k.all_churners)} khách · ${fmt.pct(selMonthly, 2)}/tháng`),
       kpiCard('MRR hiện tại', fmt.usd(selMrr), filtered ? `${fmt.pct(k.all_mrr ? selMrr / k.all_mrr : 0)} doanh thu định kỳ` : `${fmt.int(k.sel_active)} khách còn hoạt động`),
       kpiCard('MRR dự kiến mất / tháng', fmt.usd(selLoss), 'nếu không có hành động giữ chân'),
     ].join('');
 
-    const maxRate = Math.max(0.05, ...ranked.slice(0, TOP_FACTORS).map((i) => i.hi.rate));
-    $('#exTop').innerHTML = ranked.length ? ranked.slice(0, TOP_FACTORS).map((i) => `
+    const opt = (i, r, kind) => `
+      <button type="button" class="tf-opt ${kind}" data-f="${esc(i.f.key)}" data-v="${esc(r.value)}"
+        title="Lọc nhóm: ${esc(i.f.label)} = ${esc(valueLabel(i.f.key, r.value))}">
+        <span class="tf-main"><span class="tf-name">${esc(valueLabel(i.f.key, r.value))}</span><b class="num">${fmt.pct(r.rate)}</b></span>
+        <span class="tf-bar"><i style="width:${Math.max(2, 100 * r.rate).toFixed(1)}%"></i></span>
+        <span class="tf-meta"><span class="num">${fmt.int(r.customers)} khách</span><span class="tf-add">＋ Lọc</span></span>
+      </button>`;
+    $('#exTop').innerHTML = ranked.length ? '<div class="tf-cols"><span>▲ Rời đi nhiều nhất</span><span>▼ Rời đi ít nhất</span></div>' + ranked.slice(0, TOP_FACTORS).map((i) => `
       <div class="tf">
-        <div class="tf-head"><b>${esc(i.f.label)}</b><span class="muted num">chênh ${fmt.num(i.spread * 100, 0)} điểm %</span></div>
-        <div class="tf-track" aria-hidden="true">
-          <span class="tf-line" style="left:${(100 * i.lo.rate / maxRate).toFixed(1)}%;width:${(100 * (i.hi.rate - i.lo.rate) / maxRate).toFixed(1)}%"></span>
-          <span class="tf-dot lo" style="left:${(100 * i.lo.rate / maxRate).toFixed(1)}%"></span>
-          <span class="tf-dot hi" style="left:${(100 * i.hi.rate / maxRate).toFixed(1)}%"></span>
-        </div>
-        <div class="tf-vals">
-          <button type="button" class="tf-v lo" data-f="${esc(i.f.key)}" data-v="${esc(i.lo.value)}">${esc(valueLabel(i.f.key, i.lo.value))} <b class="num">${fmt.pct(i.lo.rate)}</b></button>
-          <button type="button" class="tf-v hi" data-f="${esc(i.f.key)}" data-v="${esc(i.hi.value)}">${esc(valueLabel(i.f.key, i.hi.value))} <b class="num">${fmt.pct(i.hi.rate)}</b></button>
-        </div>
+        <div class="tf-head"><b>${esc(i.f.label)}</b><span class="tf-gap">chênh ${fmt.num(i.spread * 100, 0)} điểm %</span></div>
+        <div class="tf-opts">${opt(i, i.hi, 'hi')}${opt(i, i.lo, 'lo')}</div>
       </div>`).join('') : '<p class="muted">Nhóm quá nhỏ để so sánh tiếp.</p>';
+    fitTopFactors();
 
     drawChurnChart(d, filtered);
     resizeChartsSoon();
+  }
+
+  // Bỏ bớt yếu tố cuối cho tới khi danh sách vừa khung panel: không cắt dở, không thanh cuộn.
+  function fitTopFactors() {
+    const el = $('#exTop');
+    if (!el) return;
+    while (el.scrollHeight > el.clientHeight + 1 && el.querySelectorAll('.tf').length > 1) el.querySelector('.tf:last-of-type').remove();
   }
 
   // Khung biểu đồ co giãn theo chiều cao còn lại của trang, nên phải đo lại sau khi nội dung phía trên đã vẽ xong.
@@ -664,7 +671,7 @@
   const pageFromHash = () => location.hash.slice(1).split('?')[0];
   window.addEventListener('hashchange', () => { if (pageFromHash() !== state.page) show(pageFromHash()); });
   const resizeCharts = () => Object.values(state.charts).forEach((c) => c.resize());
-  window.addEventListener('resize', resizeCharts);
+  window.addEventListener('resize', () => { resizeCharts(); if (state.page === 'explore' && ex.last) drawExplore(ex.last); });
   // Khi in, khung trang đổi kích thước (ẩn sidebar, khổ A4) nên biểu đồ phải vẽ lại theo khung mới.
   window.addEventListener('beforeprint', resizeCharts);
   window.addEventListener('afterprint', resizeCharts);

@@ -23,18 +23,18 @@ bằng đúng chiều cao cửa sổ.
 ## 2. Trang Khám phá
 
 ```
-┌ Góc nhìn ▾ │ Hợp đồng ▾ │ Internet ▾ │ Gắn bó ▾ │ Dịch vụ kèm ▾ │ Thanh toán ▾ │ Hỗ trợ KT ▾ │ Khác ▾ │ Xoá lọc │ Danh sách khách ┐
+┌ Góc nhìn ▾ │ Hợp đồng ▾ │ Internet ▾ │ Gắn bó ▾ │ Dịch vụ kèm ▾ │ Thanh toán ▾ │ Hỗ trợ KT ▾ │ Khác ▾ │ Xoá lọc ┐
 ├ 1 câu kết luận (tự sinh)                                                                                                  ┤
-├ Khách trong nhóm │ Đã rời đi (24 tháng) │ MRR hiện tại │ MRR dự kiến mất / tháng                                          ┤
-├ Tỷ lệ rời đi theo tháng (nhóm vs toàn công ty, hoặc vs chỉ tiêu)   │ Top 5 yếu tố khác biệt nhất (bấm để lọc)            ┘
+├ Khách trong nhóm (Xem danh sách ›) │ Đã rời đi (24 tháng) │ MRR hiện tại │ MRR dự kiến mất / tháng                     ┤
+├ Tỷ lệ rời đi theo tháng (nhóm vs toàn công ty, hoặc vs chỉ tiêu)   │ Yếu tố tác động mạnh nhất: ô ▲ / ô ▼ bấm để lọc      ┘
 ```
 
-- **Bộ lọc:** 6 yếu tố chính thành nút thả xuống, 7 yếu tố còn lại gom trong "Khác". Cùng một yếu tố chọn nhiều giá trị là HOẶC, khác yếu tố là VÀ. Trong bảng chọn, mỗi lựa chọn hiện luôn số khách và tỷ lệ rời đi theo các bộ lọc còn lại, nên chưa bấm đã biết tác động. Bộ lọc lưu trên URL để gửi link.
+- **Bộ lọc:** luôn một hàng, không thanh cuộn. 6 yếu tố chính thành nút thả xuống, 7 yếu tố còn lại gom trong "Khác". Nút đang lọc hiện tên giá trị (nhiều giá trị thì hiện "2 lựa chọn"); thiếu chỗ thì chỉ nút đang lọc rút gọn bằng dấu ba chấm, rê chuột để xem đủ. Cùng một yếu tố chọn nhiều giá trị là HOẶC, khác yếu tố là VÀ. Trong bảng chọn, mỗi lựa chọn hiện luôn số khách và tỷ lệ rời đi theo các bộ lọc còn lại, nên chưa bấm đã biết tác động. Bộ lọc lưu trên URL để gửi link.
 - **Góc nhìn có sẵn:** Toàn công ty · Nhóm rủi ro cao (hợp đồng tháng, Fiber, trả tay) · Khách năm đầu · Khách Fiber · Không dùng dịch vụ kèm · Hợp đồng dài hạn.
 - **Câu kết luận tự sinh:** quy mô nhóm, tỷ lệ rời đi so với mức chung, và yếu tố khác biệt nhất. Nhóm dưới 100 khách có cảnh báo mẫu nhỏ.
 - **Biểu đồ:** tỷ lệ rời đi theo tháng, đánh dấu đỉnh và mốc tăng giá Fiber. Không lọc thì so với chỉ tiêu Finance; có lọc thì so với toàn công ty.
-- **Top 5 yếu tố khác biệt nhất:** mỗi yếu tố hiện nhánh rời đi ít nhất và nhiều nhất. Bấm vào một nhánh là thêm nhánh đó vào bộ lọc. Không xếp hạng nhánh dưới 30 khách, và bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet (vì nó chỉ lặp lại yếu tố Loại internet).
-- **Chi tiết khi cần:** "Xem cả 13" mở đủ 13 yếu tố; "Danh sách khách" mở danh sách khách đang hoạt động trong nhóm (tìm kiếm, sắp xếp, xuất CSV).
+- **Yếu tố tác động mạnh nhất:** mỗi yếu tố có hai ô bấm, ▲ nhánh rời đi nhiều nhất (đỏ) và ▼ ít nhất (xanh). Mỗi ô ghi tỷ lệ, số khách, thanh tỷ lệ; rê chuột hiện "＋ Lọc". Số yếu tố hiển thị tự co theo chiều cao màn hình nên không bị cắt và không phải cuộn. Không xếp hạng nhánh dưới 30 khách, và bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet (vì nó chỉ lặp lại yếu tố Loại internet).
+- **Chi tiết khi cần:** nút "Xem đủ 13 yếu tố" ở chân panel; "Xem danh sách ›" trong thẻ Khách trong nhóm mở danh sách khách đang hoạt động (tìm kiếm, sắp xếp, xuất CSV).
 
 ## 3. Hiệu năng truy vấn
 
