@@ -135,7 +135,7 @@
     'Bank transfer (automatic)': 'Chuyển khoản tự động', 'Credit card (automatic)': 'Thẻ tín dụng tự động',
   };
   const MIN_GROUP = 30;          // nhánh nhỏ hơn mức này thì tỷ lệ dao động mạnh: hiển thị mờ, không xếp hạng
-  const TOP_FACTORS = 6;   // tối đa; số thực hiển thị tự co theo chiều cao panel (fitTopFactors)
+  const MIN_GROUP_SMALL = 5;     // nhóm đang chọn quá nhỏ thì hạ ngưỡng để vẫn có gợi ý, kèm cảnh báo mẫu nhỏ
 
   function valueLabel(factor, v) {
     if (factor === 'addons') return v === 'No internet service' ? 'Không dùng internet' : `${v} dịch vụ`;
@@ -193,9 +193,9 @@
         </div>
         <div class="card flex-card">
           <div class="card-head"><div><h3 class="card-title">Yếu tố tác động mạnh nhất</h3>
-            <div class="card-sub">Trong nhóm đang chọn. Bấm một ô để lọc theo nhánh đó.</div></div></div>
+            <div class="card-sub">Mạnh nhất ở trên, cuộn để xem tiếp. Bấm một ô để lọc theo nhánh đó.</div></div></div>
           <div class="top-factors" id="exTop"></div>
-          <button class="btn block no-print" id="exAll" type="button">Xem đủ 13 yếu tố</button>
+          <button class="btn block no-print" id="exAll" type="button">Xem mọi nhánh của từng yếu tố</button>
         </div>
       </div>`;
     mountChart('ex-churn', {});
@@ -298,14 +298,14 @@
     }
   }
 
-  function factorImpacts(d) {
+  function factorImpacts(d, minGroup = MIN_GROUP) {
     const byFactor = {};
     d.breakdown.forEach((b) => (byFactor[b.factor_key] = byFactor[b.factor_key] || []).push(b));
     return ex.catalog.map((f) => {
       const rows = (byFactor[f.key] || []).slice().sort((a, b) => a.value_sort - b.value_sort)
         .map((r) => ({ ...r, rate: r.churners / r.customers }));
       // "Không dùng internet" ở các yếu tố phụ thuộc internet chỉ lặp lại yếu tố Loại internet, nên không xếp hạng.
-      const big = rows.filter((r) => r.customers >= MIN_GROUP && !(f.key !== 'internet' && r.value === 'No internet service'))
+      const big = rows.filter((r) => r.customers >= minGroup && !(f.key !== 'internet' && r.value === 'No internet service'))
         .sort((a, b) => b.rate - a.rate);
       return { f, rows, hi: big[0], lo: big[big.length - 1], spread: big.length >= 2 ? big[0].rate - big[big.length - 1].rate : 0 };
     }).sort((a, b) => b.spread - a.spread);
@@ -320,9 +320,11 @@
     const selMrr = k.sel_mrr || 0;
     const selLoss = selMrr * selMonthly;
     const lift = allRate ? selRate / allRate : 0;
-    const impacts = factorImpacts(d);
-    // Yếu tố đang lọc đúng một giá trị thì không còn gì để so trong nhóm, bỏ khỏi bảng xếp hạng.
-    const ranked = impacts.filter((i) => i.spread > 0 && !(ex.filters[i.f.key] || []).length);
+    // Yếu tố đang lọc thì không còn gì để so trong nhóm, bỏ khỏi bảng xếp hạng.
+    const rank = (min) => factorImpacts(d, min).filter((i) => i.spread > 0 && !(ex.filters[i.f.key] || []).length);
+    let ranked = rank(MIN_GROUP);
+    const smallSample = !ranked.length;
+    if (smallSample) ranked = rank(MIN_GROUP_SMALL);
     const top = ranked[0];
 
     const who = filtered ? `Nhóm ${fmt.int(k.sel_customers)} khách (${fmt.pct(k.sel_customers / k.all_customers, 0)} công ty)` : 'Toàn công ty';
@@ -346,22 +348,16 @@
         <span class="tf-bar"><i style="width:${Math.max(2, 100 * r.rate).toFixed(1)}%"></i></span>
         <span class="tf-meta"><span class="num">${fmt.int(r.customers)} khách</span><span class="tf-add">＋ Lọc</span></span>
       </button>`;
-    $('#exTop').innerHTML = ranked.length ? '<div class="tf-cols"><span>▲ Rời đi nhiều nhất</span><span>▼ Rời đi ít nhất</span></div>' + ranked.slice(0, TOP_FACTORS).map((i) => `
+    $('#exTop').innerHTML = ranked.length ? (smallSample ? `<p class="tf-note">${badge('warn', 'Mẫu nhỏ')} Các nhánh đều dưới ${MIN_GROUP} khách, chỉ xem như tham khảo.</p>` : '')
+      + '<div class="tf-cols"><span>▲ Rời đi nhiều nhất</span><span>▼ Rời đi ít nhất</span></div>' + ranked.map((i) => `
       <div class="tf">
         <div class="tf-head"><b>${esc(i.f.label)}</b><span class="tf-gap">chênh ${fmt.num(i.spread * 100, 0)} điểm %</span></div>
         <div class="tf-opts">${opt(i, i.hi, 'hi')}${opt(i, i.lo, 'lo')}</div>
-      </div>`).join('') : '<p class="muted">Nhóm quá nhỏ để so sánh tiếp.</p>';
-    fitTopFactors();
+      </div>`).join('') : '<p class="muted">Nhóm quá nhỏ để chia tiếp. Hãy bỏ bớt một bộ lọc.</p>';
+    $('#exTop').scrollTop = 0;
 
     drawChurnChart(d, filtered);
     resizeChartsSoon();
-  }
-
-  // Bỏ bớt yếu tố cuối cho tới khi danh sách vừa khung panel: không cắt dở, không thanh cuộn.
-  function fitTopFactors() {
-    const el = $('#exTop');
-    if (!el) return;
-    while (el.scrollHeight > el.clientHeight + 1 && el.querySelectorAll('.tf').length > 1) el.querySelector('.tf:last-of-type').remove();
   }
 
   // Khung biểu đồ co giãn theo chiều cao còn lại của trang, nên phải đo lại sau khi nội dung phía trên đã vẽ xong.
@@ -671,7 +667,7 @@
   const pageFromHash = () => location.hash.slice(1).split('?')[0];
   window.addEventListener('hashchange', () => { if (pageFromHash() !== state.page) show(pageFromHash()); });
   const resizeCharts = () => Object.values(state.charts).forEach((c) => c.resize());
-  window.addEventListener('resize', () => { resizeCharts(); if (state.page === 'explore' && ex.last) drawExplore(ex.last); });
+  window.addEventListener('resize', resizeCharts);
   // Khi in, khung trang đổi kích thước (ẩn sidebar, khổ A4) nên biểu đồ phải vẽ lại theo khung mới.
   window.addEventListener('beforeprint', resizeCharts);
   window.addEventListener('afterprint', resizeCharts);

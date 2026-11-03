@@ -444,3 +444,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .pill > button:first-child { min-width: 0; flex: 1 1 auto; }
 .pill .pill-x { flex: none; }
 .pill:not(.on) { flex-shrink: 0; }
+
+/* Panel yếu tố: đủ mọi yếu tố, cuộn dọc bên trong panel; tiêu đề cột giữ cố định khi cuộn. */
+.top-factors { overflow-x: hidden; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }
+.tf-cols { position: sticky; top: 0; z-index: 1; background: var(--surface); padding: 2px 0 4px; }
+.tf-note { margin: 0 0 4px; font-size: 12px; color: var(--text-3); }

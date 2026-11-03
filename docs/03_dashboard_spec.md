@@ -33,8 +33,8 @@ bằng đúng chiều cao cửa sổ.
 - **Góc nhìn có sẵn:** Toàn công ty · Nhóm rủi ro cao (hợp đồng tháng, Fiber, trả tay) · Khách năm đầu · Khách Fiber · Không dùng dịch vụ kèm · Hợp đồng dài hạn.
 - **Câu kết luận tự sinh:** quy mô nhóm, tỷ lệ rời đi so với mức chung, và yếu tố khác biệt nhất. Nhóm dưới 100 khách có cảnh báo mẫu nhỏ.
 - **Biểu đồ:** tỷ lệ rời đi theo tháng, đánh dấu đỉnh và mốc tăng giá Fiber. Không lọc thì so với chỉ tiêu Finance; có lọc thì so với toàn công ty.
-- **Yếu tố tác động mạnh nhất:** mỗi yếu tố có hai ô bấm, ▲ nhánh rời đi nhiều nhất (đỏ) và ▼ ít nhất (xanh). Mỗi ô ghi tỷ lệ, số khách, thanh tỷ lệ; rê chuột hiện "＋ Lọc". Số yếu tố hiển thị tự co theo chiều cao màn hình nên không bị cắt và không phải cuộn. Không xếp hạng nhánh dưới 30 khách, và bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet (vì nó chỉ lặp lại yếu tố Loại internet).
-- **Chi tiết khi cần:** nút "Xem đủ 13 yếu tố" ở chân panel; "Xem danh sách ›" trong thẻ Khách trong nhóm mở danh sách khách đang hoạt động (tìm kiếm, sắp xếp, xuất CSV).
+- **Yếu tố tác động mạnh nhất:** mỗi yếu tố có hai ô bấm, ▲ nhánh rời đi nhiều nhất (đỏ) và ▼ ít nhất (xanh). Mỗi ô ghi tỷ lệ, số khách, thanh tỷ lệ; rê chuột hiện "＋ Lọc". Panel liệt kê mọi yếu tố từ mạnh đến yếu, cuộn dọc bên trong panel (tiêu đề cột ▲/▼ đứng yên khi cuộn); trang vẫn vừa một màn hình. Không xếp hạng nhánh dưới 30 khách (nhóm quá nhỏ thì hạ ngưỡng xuống 5 khách và gắn nhãn "Mẫu nhỏ"), và bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet (vì nó chỉ lặp lại yếu tố Loại internet).
+- **Chi tiết khi cần:** nút "Xem mọi nhánh của từng yếu tố" ở chân panel; "Xem danh sách ›" trong thẻ Khách trong nhóm mở danh sách khách đang hoạt động (tìm kiếm, sắp xếp, xuất CSV).
 
 ## 3. Hiệu năng truy vấn
 
