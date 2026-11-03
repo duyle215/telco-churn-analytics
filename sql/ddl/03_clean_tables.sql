@@ -1,7 +1,7 @@
 /*
-  Tầng clean: dữ liệu đã chuẩn hoá kiểu, cắt khoảng trắng, loại trùng, đối chiếu khoá.
-  Bản ghi không dùng được KHÔNG bị xoá im lặng mà chuyển sang clean.rejected_records kèm lý do.
-  Script deploy: tạo lại bảng. Stored procedure tự TRUNCATE + nạp lại nên chạy nhiều lần vẫn đúng.
+  Clean layer: typed, trimmed, de-duplicated, key-checked data.
+  Unusable rows are NOT silently deleted; they move to clean.rejected_records with a reason.
+  Deploy script: recreates the tables. The stored procedures TRUNCATE and reload, so repeated runs stay correct.
 */
 DROP TABLE IF EXISTS clean.customers;
 CREATE TABLE clean.customers (
@@ -23,15 +23,15 @@ CREATE TABLE clean.contracts (
     is_paperless_billing BIT           NOT NULL,
     payment_method       NVARCHAR(30)  NOT NULL,
     monthly_charges      DECIMAL(10,2) NOT NULL,
-    total_charges        DECIMAL(12,2) NULL,      -- NULL hợp lệ khi tenure = 0 (chưa phát sinh cước)
+    total_charges        DECIMAL(12,2) NULL,      -- NULL is valid when tenure = 0 (nothing billed yet)
     tenure_months        INT           NOT NULL,
     start_date           DATE          NOT NULL,
     end_date             DATE          NULL,
     contract_status      NVARCHAR(20)  NOT NULL,
     is_churned           BIT           NOT NULL,
     churn_month          DATE          NULL,
-    first_billing_month  DATE          NULL,      -- tháng sau tháng ký (tính cước sau), NULL nếu tenure = 0
-    last_billing_month   DATE          NULL,      -- tháng rời đi, hoặc tháng snapshot nếu còn hoạt động
+    first_billing_month  DATE          NULL,      -- month after signup (billed in arrears), NULL if tenure = 0
+    last_billing_month   DATE          NULL,      -- exit month, or snapshot month if still active
     stg_row_id           BIGINT        NOT NULL
 );
 
@@ -72,7 +72,7 @@ CREATE TABLE clean.payments (
     payment_date    DATE          NOT NULL,
     amount_usd      DECIMAL(10,2) NOT NULL,
     payment_method  NVARCHAR(30)  NOT NULL,
-    days_after_due  INT           NOT NULL,      -- âm = trả trước hạn
+    days_after_due  INT           NOT NULL,      -- negative = paid early
     is_late         BIT           NOT NULL,
     stg_row_id      BIGINT        NOT NULL,
     INDEX ix_clean_payments_invoice (invoice_id)
@@ -95,7 +95,7 @@ CREATE TABLE clean.tickets (
 DROP TABLE IF EXISTS clean.targets;
 CREATE TABLE clean.targets (
     target_month       DATE           NOT NULL PRIMARY KEY,
-    churn_rate_target  DECIMAL(9,6)   NOT NULL,   -- tỷ lệ (0.0139), đã đổi từ đơn vị % của file Excel
+    churn_rate_target  DECIMAL(9,6)   NOT NULL,   -- ratio (0.0139), converted from the percent unit used in the Excel file
     mrr_target_usd     DECIMAL(14,2)  NOT NULL,
     note               NVARCHAR(400)  NULL,
     sheet_name         NVARCHAR(100)  NOT NULL,
@@ -120,7 +120,7 @@ CREATE TABLE clean.rejected_records (
     business_key   NVARCHAR(100)    NULL,
     reason_code    VARCHAR(50)      NOT NULL,
     reason_detail  NVARCHAR(400)    NULL,
-    raw_record     NVARCHAR(MAX)    NULL,     -- toàn bộ dòng stg dạng JSON để truy vết
+    raw_record     NVARCHAR(MAX)    NULL,     -- the whole stg row as JSON, for tracing
     rejected_at    DATETIME2(0)     NOT NULL,
     INDEX ix_rejected_source (source_table, reason_code)
 );

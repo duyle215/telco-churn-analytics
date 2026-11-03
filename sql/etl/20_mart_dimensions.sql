@@ -1,8 +1,8 @@
 /*
-  clean -> mart: các dimension.
-  MERGE kiểu SCD type 1 (ghi đè thuộc tính, không giữ lịch sử) vì nguồn chỉ có trạng thái hiện tại.
-  Surrogate key không đổi giữa các lần chạy; chỉ cập nhật khi thuộc tính thực sự thay đổi
-  (so sánh bằng EXCEPT để xử lý đúng NULL).
+  clean -> mart: dimensions.
+  MERGE as SCD type 1 (overwrite attributes, no history) because the sources only hold the current state.
+  Surrogate keys never change between runs; rows are only updated when an attribute really changes
+  (compared with EXCEPT so NULLs are handled correctly).
 */
 
 CREATE OR ALTER PROCEDURE mart.usp_load_dim_date @batch_id UNIQUEIDENTIFIER
@@ -14,8 +14,8 @@ BEGIN
     BEGIN TRY
         DECLARE @snapshot DATE = dbo.fn_config_date('snapshot_date');
         DECLARE @window_start DATE = dbo.fn_config_date('analysis_window_start');
-        IF @snapshot IS NULL OR @window_start IS NULL THROW 50003, N'Thiếu etl_config.snapshot_date/analysis_window_start', 1;
-        -- Lịch phủ trọn các năm có dữ liệu: từ năm ký hợp đồng sớm nhất đến hết năm snapshot.
+        IF @snapshot IS NULL OR @window_start IS NULL THROW 50003, N'Missing etl_config.snapshot_date/analysis_window_start', 1;
+        -- The calendar covers whole years: from the earliest signup year to the end of the snapshot year.
         DECLARE @start DATE = DATEFROMPARTS(YEAR((SELECT MIN(start_date) FROM clean.contracts)), 1, 1);
         DECLARE @end DATE = DATEFROMPARTS(YEAR(@snapshot), 12, 31);
 
@@ -32,7 +32,7 @@ BEGIN
                    CONCAT('Q', DATEPART(QUARTER, dt)) AS quarter_label,
                    CONCAT(YEAR(dt), '-Q', DATEPART(QUARTER, dt)) AS year_quarter,
                    MONTH(dt) AS [month],
-                   -- CHOOSE thay cho DATENAME để không phụ thuộc ngôn ngữ của phiên kết nối.
+                   -- CHOOSE instead of DATENAME so the result does not depend on the session language.
                    CHOOSE(MONTH(dt), 'January', 'February', 'March', 'April', 'May', 'June', 'July',
                           'August', 'September', 'October', 'November', 'December') AS month_name,
                    CHOOSE(MONTH(dt), 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec') AS month_short,
@@ -42,7 +42,7 @@ BEGIN
                    EOMONTH(dt) AS month_end_date,
                    DATEDIFF(MONTH, @start, dt) AS month_index,
                    DAY(dt) AS day_of_month,
-                   -- 1900-01-01 là thứ Hai, nên công thức này không phụ thuộc SET DATEFIRST.
+                   -- 1900-01-01 was a Monday, so this formula does not depend on SET DATEFIRST.
                    DATEDIFF(DAY, '19000101', dt) % 7 + 1 AS day_of_week,
                    CHOOSE(DATEDIFF(DAY, '19000101', dt) % 7 + 1, 'Monday', 'Tuesday', 'Wednesday', 'Thursday',
                           'Friday', 'Saturday', 'Sunday') AS day_name,
@@ -89,7 +89,7 @@ BEGIN
     BEGIN TRY
         BEGIN TRAN;
 
-        /* dim_customer: nhân khẩu học + vòng đời. Nhóm tenure theo mốc 12 tháng là cách chia phổ biến trong viễn thông. */
+        /* dim_customer: demographics + lifecycle. 12-month tenure bands are the usual split in telecom. */
         WITH s AS (
             SELECT c.customer_id, c.gender,
                    CASE c.is_senior_citizen WHEN 1 THEN N'Yes' ELSE N'No' END AS senior_citizen,

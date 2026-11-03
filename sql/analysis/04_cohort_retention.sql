@@ -1,21 +1,21 @@
 /*
-  Câu hỏi 4: Khách được giữ lại bao lâu, theo tháng bắt đầu (cohort)?
-  Nguồn: mart.v_cohort_retention. Chỉ lấy cohort có kỳ cước đầu tiên từ 2024-01 (cohort 2023-12..2025-11),
-  vì cohort cũ hơn chỉ còn những khách đã sống sót tới 2024 (survivorship bias).
+  Question 4: How long are customers retained, by start month (cohort)?
+  Source: mart.v_cohort_retention. Only cohorts whose first bill is in 2024-01 or later (cohorts 2023-12..2025-11),
+  because older cohorts only contain customers who survived until 2024 (survivorship bias).
 
-  Insight (retention bình quân có trọng số theo quy mô cohort):
-  - Tháng 1: 86,1%; tháng 3: 78,2%; tháng 6: 71,2%; tháng 12: 61,1%; tháng 18: 55,0%.
-    Mất 13,9 điểm % ngay sau kỳ cước đầu tiên: giai đoạn onboarding là điểm rò rỉ lớn nhất.
-  - Các cohort 2025-01..2025-04 chỉ giữ được 70,9-73,3% sau 3 tháng, so với 74-84% ở các cohort 2024:
-    3 tháng đầu của họ trùng đợt tăng giá Fiber.
-  - Cohort 2024-04 có retention 12 tháng thấp nhất (49,2%); tháng thứ 12 của cohort này rơi đúng 2025-04.
+  Insight (retention averaged across cohorts, weighted by cohort size):
+  - Month 1: 86.1%; month 3: 78.2%; month 6: 71.2%; month 12: 61.1%; month 18: 55.0%.
+    13.9 points are lost right after the first bill: onboarding is the biggest leak.
+  - Cohorts 2025-01..2025-04 kept only 70.9-73.3% after 3 months vs 74-84% for the 2024 cohorts:
+    their first three months overlap the simulated Fiber price increase.
+  - Cohort 2024-04 has the lowest 12-month retention (49.2%); its 12th month falls on 2025-04.
 */
--- Ma trận retention (cohort x số tháng kể từ kỳ cước đầu).
+-- Retention matrix (cohort x months since first bill).
 SELECT cohort_label, cohort_size, month_offset, active_customers, retention_rate
 FROM mart.v_cohort_retention
 ORDER BY cohort_month, month_offset;
 
--- Đường retention bình quân có trọng số; mỗi mốc chỉ tính các cohort đã đủ tuổi tới mốc đó.
+-- Weighted average retention curve; each point only uses cohorts old enough to reach it.
 SELECT month_offset,
        COUNT(*) AS cohorts,
        SUM(cohort_size) AS customers,
@@ -24,7 +24,7 @@ FROM mart.v_cohort_retention
 GROUP BY month_offset
 ORDER BY month_offset;
 
--- Retention tại các mốc 3/6/12 tháng của từng cohort.
+-- Retention at months 3/6/12 for each cohort.
 SELECT cohort_label, cohort_size,
        MAX(CASE WHEN month_offset = 3 THEN retention_rate END) AS retention_m3,
        MAX(CASE WHEN month_offset = 6 THEN retention_rate END) AS retention_m6,

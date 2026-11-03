@@ -1,7 +1,7 @@
 /*
-  Bộ kiểm tra chất lượng dữ liệu, chạy cuối mỗi batch, lưu vào mart.dq_check_results.
-  value_before đo trên stg (dữ liệu gốc), value_after đo trên clean/mart, value_rejected = số dòng bị loại.
-  PASS: đạt kỳ vọng. WARN: lệch đã biết và đã xử lý (ví dụ tháng billing sự cố). FAIL: cần điều tra.
+  Data quality checks, run at the end of every batch, stored in mart.dq_check_results.
+  value_before is measured on stg (raw data), value_after on clean/mart, value_rejected = rows rejected.
+  PASS: meets expectation. WARN: known and handled deviation (e.g. the billing outage month). FAIL: needs investigation.
 */
 CREATE OR ALTER PROCEDURE dbo.usp_run_dq_checks @batch_id UNIQUEIDENTIFIER
 AS
@@ -19,9 +19,9 @@ BEGIN
         DECLARE @rej TABLE (source_table NVARCHAR(128), n INT);
         INSERT INTO @rej SELECT source_table, COUNT(*) FROM clean.rejected_records GROUP BY source_table;
 
-        /* 1. Đối soát số dòng: mọi dòng stg phải có mặt ở clean hoặc ở rejected, không mất dòng nào. */
+        /* 1. Row reconciliation: every stg row must be in clean or in rejected; no row may be lost. */
         INSERT INTO #dq (check_id, check_group, check_name, object_name, value_before, value_after, value_rejected, expected_rule)
-        SELECT CONCAT('ROWS_', UPPER(PARSENAME(x.stg_table, 1))), N'1. Đối soát số dòng', N'stg = clean + rejected',
+        SELECT CONCAT('ROWS_', UPPER(PARSENAME(x.stg_table, 1))), N'1. Row reconciliation', N'stg = clean + rejected',
                CONCAT(x.stg_table, N' -> ', x.clean_table), x.stg_rows, x.clean_rows, ISNULL(r.n, 0),
                N'value_before = value_after + value_rejected'
         FROM (VALUES
@@ -36,25 +36,25 @@ BEGIN
         ) x(stg_table, clean_table, stg_rows, clean_rows)
         LEFT JOIN @rej r ON r.source_table = x.stg_table;
         UPDATE #dq SET status = CASE WHEN value_before = value_after + value_rejected THEN 'PASS' ELSE 'FAIL' END
-        WHERE check_group = N'1. Đối soát số dòng';
+        WHERE check_group = N'1. Row reconciliation';
 
-        /* 2. Từng loại lỗi: đếm trước (stg) và sau (clean) khi làm sạch. */
+        /* 2. Each error type: counted before (stg) and after (clean) cleaning. */
         INSERT INTO #dq (check_id, check_group, check_name, object_name, value_before, value_after, value_rejected, expected_rule, note)
-        SELECT 'ERR_DUPLICATE_CUSTOMER', N'2. Lỗi trước/sau làm sạch', N'Trùng customer_id (sau khi TRIM)', N'customers',
+        SELECT 'ERR_DUPLICATE_CUSTOMER', N'2. Errors before/after cleaning', N'Duplicate customer_id (after TRIM)', N'customers',
                (SELECT COUNT(*) - COUNT(DISTINCT LTRIM(RTRIM(customer_id))) FROM stg.crm_customers),
                (SELECT COUNT(*) - COUNT(DISTINCT customer_id) FROM clean.customers),
                (SELECT COUNT(*) FROM clean.rejected_records WHERE reason_code = 'DUPLICATE_KEY' AND source_table = N'stg.crm_customers'),
-               N'after = 0', N'Giữ bản ghi updated_at mới nhất'
+               N'after = 0', N'Kept the row with the latest updated_at'
         UNION ALL
-        SELECT 'ERR_BOOLEAN_VARIANT', N'2. Lỗi trước/sau làm sạch', N'Giá trị Yes/No không chuẩn (Y, yes, 1, N, 0...)',
+        SELECT 'ERR_BOOLEAN_VARIANT', N'2. Errors before/after cleaning', N'Non-standard Yes/No values (Y, yes, 1, N, 0...)',
                N'customers.partner/dependents, contracts.paperless_billing/churn_flag, services.phone_service',
                (SELECT COUNT(*) FROM stg.crm_customers CROSS APPLY (VALUES (partner), (dependents)) v(x) WHERE x COLLATE Latin1_General_CS_AS NOT IN ('Yes', 'No'))
              + (SELECT COUNT(*) FROM stg.crm_contracts CROSS APPLY (VALUES (paperless_billing), (churn_flag)) v(x) WHERE x COLLATE Latin1_General_CS_AS NOT IN ('Yes', 'No'))
              + (SELECT COUNT(*) FROM stg.crm_services WHERE phone_service COLLATE Latin1_General_CS_AS NOT IN ('Yes', 'No')),
                0, NULL, N'after = 0',
-               N'Clean lưu cờ dạng BIT nên về cấu trúc không thể còn biến thể; so sánh phân biệt hoa thường để bắt "yes"/"YES"'
+               N'Clean stores flags as BIT, so variants cannot survive by design; case-sensitive compare catches "yes"/"YES"'
         UNION ALL
-        SELECT 'ERR_WHITESPACE', N'2. Lỗi trước/sau làm sạch', N'Khoảng trắng thừa đầu/cuối (đo bằng DATALENGTH)',
+        SELECT 'ERR_WHITESPACE', N'2. Errors before/after cleaning', N'Leading/trailing whitespace (measured with DATALENGTH)',
                N'customer_id (customers, services, invoices, tickets), gender, contract_type, payment_method',
                (SELECT COUNT(*) FROM stg.crm_customers WHERE DATALENGTH(customer_id) <> DATALENGTH(LTRIM(RTRIM(customer_id))) OR DATALENGTH(gender) <> DATALENGTH(LTRIM(RTRIM(gender))))
              + (SELECT COUNT(*) FROM stg.crm_contracts WHERE DATALENGTH(contract_type) <> DATALENGTH(LTRIM(RTRIM(contract_type))) OR DATALENGTH(payment_method) <> DATALENGTH(LTRIM(RTRIM(payment_method))))
@@ -67,55 +67,55 @@ BEGIN
              + (SELECT COUNT(*) FROM clean.invoices WHERE DATALENGTH(customer_id) <> DATALENGTH(LTRIM(RTRIM(customer_id))))
              + (SELECT COUNT(*) FROM clean.tickets WHERE DATALENGTH(customer_id) <> DATALENGTH(LTRIM(RTRIM(customer_id)))),
                NULL, N'after = 0',
-               N'Dùng DATALENGTH vì SQL Server bỏ qua khoảng trắng cuối khi so sánh bằng ='
+               N'DATALENGTH because SQL Server ignores trailing spaces when comparing with ='
         UNION ALL
-        SELECT 'ERR_NON_ISO_DATE', N'2. Lỗi trước/sau làm sạch', N'Ngày dạng chuỗi không theo ISO',
+        SELECT 'ERR_NON_ISO_DATE', N'2. Errors before/after cleaning', N'Date strings not in ISO format',
                N'contracts.start_date/end_date, tickets.created_at/resolved_at',
                (SELECT COUNT(*) FROM stg.crm_contracts CROSS APPLY (VALUES (start_date), (end_date)) v(x) WHERE clean.fn_date_format(x) NOT IN ('ISO', 'EMPTY'))
              + (SELECT COUNT(*) FROM stg.ticket_support_tickets CROSS APPLY (VALUES (created_at), (resolved_at)) v(x) WHERE clean.fn_date_format(x) NOT IN ('ISO', 'EMPTY')),
                (SELECT COUNT(*) FROM clean.rejected_records WHERE reason_code = 'INVALID_DATE'
                 AND source_table IN (N'stg.crm_contracts', N'stg.ticket_support_tickets')),
-               NULL, N'after (số dòng không parse được) = 0', N'Clean lưu kiểu DATE/DATETIME2; after = số dòng bị loại vì không đọc được ngày'
+               NULL, N'after (rows that cannot be parsed) = 0', N'Clean stores DATE/DATETIME2; after = rows rejected because the date could not be read'
         UNION ALL
-        SELECT 'ERR_NEGATIVE_AMOUNT', N'2. Lỗi trước/sau làm sạch', N'Amount hoá đơn âm', N'invoices.amount_usd',
+        SELECT 'ERR_NEGATIVE_AMOUNT', N'2. Errors before/after cleaning', N'Negative invoice amount', N'invoices.amount_usd',
                (SELECT COUNT(*) FROM stg.billing_invoices WHERE amount_usd < 0),
                (SELECT COUNT(*) FROM clean.invoices WHERE amount_usd < 0),
-               NULL, N'after = 0', CONCAT(N'Đã đảo dấu ', (SELECT COUNT(*) FROM clean.invoices WHERE amount_source = 'SIGN_CORRECTED'), N' dòng')
+               NULL, N'after = 0', CONCAT(N'Sign flipped on ', (SELECT COUNT(*) FROM clean.invoices WHERE amount_source = 'SIGN_CORRECTED'), N' rows')
         UNION ALL
-        SELECT 'ERR_NULL_AMOUNT', N'2. Lỗi trước/sau làm sạch', N'Amount hoá đơn NULL', N'invoices.amount_usd',
+        SELECT 'ERR_NULL_AMOUNT', N'2. Errors before/after cleaning', N'NULL invoice amount', N'invoices.amount_usd',
                (SELECT COUNT(*) FROM stg.billing_invoices WHERE amount_usd IS NULL),
                (SELECT COUNT(*) FROM clean.invoices WHERE amount_usd IS NULL),
                NULL, N'after = 0',
-               (SELECT N'Khôi phục: ' + STRING_AGG(CONCAT(amount_source, N'=', n), N', ')
+               (SELECT N'Recovered: ' + STRING_AGG(CONCAT(amount_source, N'=', n), N', ')
                 FROM (SELECT amount_source, COUNT(*) n FROM clean.invoices
                       WHERE amount_source IN ('FROM_PAYMENT', 'IMPUTED_PREV_INVOICE', 'IMPUTED_NEXT_INVOICE', 'IMPUTED_CONTRACT_PRICE')
                       GROUP BY amount_source) x)
         UNION ALL
-        SELECT 'ERR_TOTAL_CHARGES_BLANK', N'2. Lỗi trước/sau làm sạch', N'TotalCharges rỗng (lỗi có sẵn trong dữ liệu gốc)', N'contracts.total_charges',
+        SELECT 'ERR_TOTAL_CHARGES_BLANK', N'2. Errors before/after cleaning', N'Blank TotalCharges (present in the original data)', N'contracts.total_charges',
                (SELECT COUNT(*) FROM stg.crm_contracts WHERE NULLIF(LTRIM(RTRIM(total_charges)), N'') IS NULL),
                (SELECT COUNT(*) FROM clean.contracts WHERE total_charges IS NULL AND tenure_months > 0),
-               NULL, N'after (rỗng mà tenure > 0) = 0', N'Rỗng chỉ hợp lệ với khách tenure = 0 (chưa phát sinh cước), giữ NULL';
+               NULL, N'after (blank with tenure > 0) = 0', N'Blank is only valid for tenure = 0 customers (nothing billed yet); kept as NULL';
         UPDATE #dq SET status = CASE WHEN value_after = 0 THEN 'PASS' ELSE 'FAIL' END
-        WHERE check_group = N'2. Lỗi trước/sau làm sạch';
+        WHERE check_group = N'2. Errors before/after cleaning';
 
-        /* 3. Đối chiếu khoá giữa CRM và Billing. */
+        /* 3. Key reconciliation between CRM and Billing. */
         INSERT INTO #dq (check_id, check_group, check_name, object_name, value_before, value_after, value_rejected, expected_rule, status, note)
-        SELECT 'KEY_ORPHAN_INVOICE', N'3. Đối chiếu CRM - Billing', N'Hoá đơn của customer_id không có trong CRM', N'invoices.customer_id',
+        SELECT 'KEY_ORPHAN_INVOICE', N'3. CRM - Billing reconciliation', N'Invoices for a customer_id missing from CRM', N'invoices.customer_id',
                (SELECT COUNT(*) FROM stg.billing_invoices i
                 WHERE NOT EXISTS (SELECT 1 FROM stg.crm_customers c WHERE LTRIM(RTRIM(c.customer_id)) = LTRIM(RTRIM(i.customer_id)))),
                (SELECT COUNT(*) FROM clean.invoices i WHERE NOT EXISTS (SELECT 1 FROM clean.customers c WHERE c.customer_id = i.customer_id)),
                (SELECT COUNT(*) FROM clean.rejected_records WHERE source_table = N'stg.billing_invoices' AND reason_code = 'ORPHAN_CUSTOMER'),
                N'after = 0', NULL,
-               (SELECT CONCAT(COUNT(DISTINCT LTRIM(RTRIM(i.customer_id))), N' customer_id mồ côi')
+               (SELECT CONCAT(COUNT(DISTINCT LTRIM(RTRIM(i.customer_id))), N' orphan customer_id')
                 FROM stg.billing_invoices i
                 WHERE NOT EXISTS (SELECT 1 FROM stg.crm_customers c WHERE LTRIM(RTRIM(c.customer_id)) = LTRIM(RTRIM(i.customer_id))))
         UNION ALL
-        -- Khách mà mọi kỳ cước đều rơi vào tháng không có hoá đơn nào (sự cố billing) thì thiếu hoá đơn là
-        -- có giải thích (WARN); còn lại là FAIL.
-        SELECT 'KEY_BILLED_CUSTOMER_NO_INVOICE', N'3. Đối chiếu CRM - Billing', N'Khách có kỳ cước theo CRM nhưng không có hoá đơn nào', N'contracts vs invoices',
-               NULL, COUNT(*), NULL, N'after = 0; WARN nếu mọi kỳ cước của khách nằm trong tháng billing sự cố',
+        -- A customer whose every billing period falls in a month with no invoices at all (billing outage) has an
+        -- explained gap (WARN); anything else is a FAIL.
+        SELECT 'KEY_BILLED_CUSTOMER_NO_INVOICE', N'3. CRM - Billing reconciliation', N'Customer billed per CRM but with no invoice', N'contracts vs invoices',
+               NULL, COUNT(*), NULL, N'after = 0; WARN if all of the customer''s periods fall in the billing outage month',
                CASE WHEN COUNT(*) = 0 THEN 'PASS' WHEN SUM(x.explained) = COUNT(*) THEN 'WARN' ELSE 'FAIL' END,
-               CONCAT(SUM(x.explained), N'/', COUNT(*), N' khách chỉ có kỳ cước trong tháng không có hoá đơn nào')
+               CONCAT(SUM(x.explained), N'/', COUNT(*), N' customers only have periods in a month with no invoices')
         FROM clean.contracts k
         CROSS APPLY (SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM clean.invoices i2
                                                   WHERE i2.billing_month BETWEEN k.first_billing_month AND k.last_billing_month)
@@ -123,22 +123,22 @@ BEGIN
         WHERE k.first_billing_month IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM clean.invoices i WHERE i.customer_id = k.customer_id)
         UNION ALL
-        SELECT 'KEY_INVOICE_OUTSIDE_CONTRACT', N'3. Đối chiếu CRM - Billing', N'Hoá đơn nằm ngoài vòng đời hợp đồng', N'invoices vs contracts',
+        SELECT 'KEY_INVOICE_OUTSIDE_CONTRACT', N'3. CRM - Billing reconciliation', N'Invoice outside the contract lifetime', N'invoices vs contracts',
                NULL, NULL,
                (SELECT COUNT(*) FROM clean.rejected_records WHERE source_table = N'stg.billing_invoices' AND reason_code = 'OUTSIDE_CONTRACT_PERIOD'),
                N'rejected = 0', NULL, NULL
         UNION ALL
-        SELECT 'KEY_TENURE_VS_INVOICES', N'3. Đối chiếu CRM - Billing', N'tenure_months trong CRM khác số kỳ cước suy ra từ ngày hợp đồng', N'contracts',
+        SELECT 'KEY_TENURE_VS_INVOICES', N'3. CRM - Billing reconciliation', N'CRM tenure_months differs from periods implied by contract dates', N'contracts',
                NULL,
                (SELECT COUNT(*) FROM clean.contracts WHERE first_billing_month IS NOT NULL
                 AND DATEDIFF(MONTH, first_billing_month, last_billing_month) + 1 <> tenure_months),
                NULL, N'after = 0', NULL, NULL;
         UPDATE #dq SET status = CASE WHEN COALESCE(value_after, value_rejected) = 0 THEN 'PASS' ELSE 'FAIL' END
-        WHERE check_group = N'3. Đối chiếu CRM - Billing' AND check_id NOT IN ('KEY_ORPHAN_INVOICE', 'KEY_BILLED_CUSTOMER_NO_INVOICE');
+        WHERE check_group = N'3. CRM - Billing reconciliation' AND check_id NOT IN ('KEY_ORPHAN_INVOICE', 'KEY_BILLED_CUSTOMER_NO_INVOICE');
         UPDATE #dq SET status = CASE WHEN value_after = 0 AND value_rejected = value_before THEN 'PASS' ELSE 'FAIL' END
         WHERE check_id = 'KEY_ORPHAN_INVOICE';
 
-        -- Tháng thiếu hoá đơn so với lịch cước của CRM: phát hiện sự cố billing mà không cần biết trước tháng nào.
+        -- Months missing invoices compared with the CRM billing calendar: finds a billing outage without knowing the month in advance.
         WITH expected AS (
             SELECT d.[date] AS billing_month, COUNT(*) AS customers
             FROM clean.contracts k
@@ -152,14 +152,14 @@ BEGIN
             WHERE e.customers <> ISNULL(a.invoices, 0)
         )
         INSERT INTO #dq (check_id, check_group, check_name, object_name, value_before, value_after, value_rejected, expected_rule, status, note)
-        SELECT 'KEY_MISSING_INVOICE_MONTH', N'3. Đối chiếu CRM - Billing', N'Khách-tháng có trong lịch cước CRM nhưng thiếu hoá đơn',
+        SELECT 'KEY_MISSING_INVOICE_MONTH', N'3. CRM - Billing reconciliation', N'Customer-months in the CRM billing calendar without an invoice',
                N'contracts vs invoices', (SELECT SUM(customers) FROM expected), (SELECT ISNULL(SUM(customers - invoices), 0) FROM gap), NULL,
-               N'after = 0; nếu thiếu cả tháng thì WARN (đã ước lượng ở fact_billing)',
+               N'after = 0; WARN when a whole month is missing (estimated in fact_billing)',
                CASE WHEN NOT EXISTS (SELECT 1 FROM gap) THEN 'PASS'
                     WHEN NOT EXISTS (SELECT 1 FROM gap WHERE invoices > 0) THEN 'WARN' ELSE 'FAIL' END,
-               (SELECT STRING_AGG(CONCAT(CONVERT(CHAR(7), billing_month, 120), N': thiếu ', customers - invoices, N'/', customers), N'; ') FROM gap);
+               (SELECT STRING_AGG(CONCAT(CONVERT(CHAR(7), billing_month, 120), N': missing ', customers - invoices, N'/', customers), N'; ') FROM gap);
 
-        /* 4. Tổng tiền trước/sau. Chênh lệch stg -> clean phải giải thích được hoàn toàn bằng các bước sửa. */
+        /* 4. Amount totals before/after. The stg -> clean difference must be fully explained by the fixes. */
         DECLARE @stg_sum DECIMAL(18,2) = (SELECT SUM(amount_usd) FROM stg.billing_invoices);
         DECLARE @clean_sum DECIMAL(18,2) = (SELECT SUM(amount_usd) FROM clean.invoices);
         DECLARE @sign_fix DECIMAL(18,2) = (SELECT ISNULL(SUM(2 * amount_usd), 0) FROM clean.invoices WHERE amount_source = 'SIGN_CORRECTED');
@@ -176,41 +176,41 @@ BEGIN
 
         INSERT INTO #dq (check_id, check_group, check_name, object_name, value_before, value_after, value_rejected, expected_rule, status, note)
         VALUES
-        ('AMT_INVOICE_STG_CLEAN', N'4. Tổng tiền', N'Tổng amount hoá đơn stg -> clean (USD)', N'invoices',
+        ('AMT_INVOICE_STG_CLEAN', N'4. Amount totals', N'Invoice amount total stg -> clean (USD)', N'invoices',
          @stg_sum, @clean_sum, @rejected_sum,
-         N'clean = stg - rejected + 2 x |âm đã đảo| + NULL đã khôi phục',
+         N'clean = stg - rejected + 2 x |sign-flipped| + recovered NULLs',
          CASE WHEN ABS(@clean_sum - (@stg_sum - @rejected_sum + @sign_fix + @null_fix)) < 0.01 THEN 'PASS' ELSE 'FAIL' END,
-         CONCAT(N'+', @sign_fix, N' do đảo dấu; +', @null_fix, N' do khôi phục NULL; -', @rejected_sum, N' do loại bản ghi')),
-        ('AMT_INVOICE_CLEAN_MART', N'4. Tổng tiền', N'Tổng amount clean.invoices -> mart.fact_billing (USD)', N'fact_billing',
+         CONCAT(N'+', @sign_fix, N' from sign fixes; +', @null_fix, N' from recovered NULLs; -', @rejected_sum, N' from rejected rows')),
+        ('AMT_INVOICE_CLEAN_MART', N'4. Amount totals', N'Amount total clean.invoices -> mart.fact_billing (USD)', N'fact_billing',
          @clean_sum, @mart_sum, NULL,
-         N'mart = clean + phần ước lượng cho tháng thiếu hoá đơn',
+         N'mart = clean + estimates for months without an invoice',
          CASE WHEN ABS(@mart_sum - (@clean_sum + @mart_imputed)) < 0.01 THEN 'PASS' ELSE 'FAIL' END,
-         CONCAT(N'+', @mart_imputed, N' ước lượng cho khách-tháng thiếu hoá đơn')),
-        ('AMT_PAYMENT_STG_CLEAN', N'4. Tổng tiền', N'Tổng thanh toán stg -> clean (USD)', N'payments',
+         CONCAT(N'+', @mart_imputed, N' estimated for customer-months without an invoice')),
+        ('AMT_PAYMENT_STG_CLEAN', N'4. Amount totals', N'Payment total stg -> clean (USD)', N'payments',
          @pay_stg, @pay_clean, @pay_rejected, N'clean = stg - rejected',
          CASE WHEN ABS(@pay_clean - (@pay_stg - @pay_rejected)) < 0.01 THEN 'PASS' ELSE 'FAIL' END, NULL);
 
-        -- Kiểm chứng giả định "âm là nhập nhầm dấu": sau khi đảo dấu, số tiền phải bằng số đã thanh toán.
+        -- Check the assumption "negative = sign entry error": after flipping, the amount must equal the amount paid.
         INSERT INTO #dq (check_id, check_group, check_name, object_name, value_before, value_after, value_rejected, expected_rule, status, note)
-        SELECT 'AMT_SIGN_FIX_MATCHES_PAYMENT', N'4. Tổng tiền', N'Hoá đơn đã đảo dấu khớp với số tiền thanh toán', N'invoices vs payments',
+        SELECT 'AMT_SIGN_FIX_MATCHES_PAYMENT', N'4. Amount totals', N'Sign-flipped invoices match the amount paid', N'invoices vs payments',
                COUNT(*), SUM(CASE WHEN p.paid = i.amount_usd THEN 1 ELSE 0 END), NULL,
-               N'after = before (với các hoá đơn đã có thanh toán)',
+               N'after = before (for invoices that have a payment)',
                CASE WHEN COUNT(*) = SUM(CASE WHEN p.paid = i.amount_usd THEN 1 ELSE 0 END) THEN 'PASS' ELSE 'WARN' END,
-               N'Chỉ xét hoá đơn đã đảo dấu và đã có thanh toán'
+               N'Only invoices that were sign-flipped and have a payment'
         FROM clean.invoices i
         JOIN (SELECT invoice_id, SUM(amount_usd) paid FROM clean.payments GROUP BY invoice_id) p ON p.invoice_id = i.invoice_id
         WHERE i.amount_source = 'SIGN_CORRECTED';
 
-        /* 5. Tính đầy đủ của dữ liệu tham chiếu. */
+        /* 5. Completeness of reference data. */
         INSERT INTO #dq (check_id, check_group, check_name, object_name, value_before, value_after, value_rejected, expected_rule, status, note)
-        SELECT 'REF_FX_COVERAGE', N'5. Dữ liệu tham chiếu', N'Tháng có cước nhưng thiếu tỷ giá', N'fx_rates',
+        SELECT 'REF_FX_COVERAGE', N'5. Reference data', N'Billed months without an FX rate', N'fx_rates',
                NULL, COUNT(*), NULL, N'after = 0', CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END,
-               (SELECT STRING_AGG(CONCAT(provider, N' (', granularity, N'): ', n, N' tháng'), N'; ')
+               (SELECT STRING_AGG(CONCAT(provider, N' (', granularity, N'): ', n, N' months'), N'; ')
                 FROM (SELECT provider, granularity, COUNT(*) n FROM clean.fx_rates GROUP BY provider, granularity) x)
         FROM (SELECT DISTINCT billing_month FROM clean.invoices) i
         WHERE NOT EXISTS (SELECT 1 FROM clean.fx_rates f WHERE f.rate_month = i.billing_month)
         UNION ALL
-        SELECT 'REF_TARGET_COVERAGE', N'5. Dữ liệu tham chiếu', N'Số tháng có chỉ tiêu trong cửa sổ phân tích', N'targets',
+        SELECT 'REF_TARGET_COVERAGE', N'5. Reference data', N'Months with a target in the analysis window', N'targets',
                24, COUNT(*), NULL, N'after = 24', CASE WHEN COUNT(*) = 24 THEN 'PASS' ELSE 'FAIL' END, NULL
         FROM clean.targets
         WHERE target_month BETWEEN dbo.fn_config_date('analysis_window_start') AND dbo.fn_config_date('snapshot_date');

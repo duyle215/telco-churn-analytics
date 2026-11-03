@@ -1,15 +1,15 @@
-"""Tái dựng dòng thời gian vòng đời khách hàng từ bảng snapshot gốc.
+"""Rebuild each customer's lifecycle timeline from the original snapshot table.
 
-Bảng gốc chỉ là ảnh chụp 1 thời điểm: Churn = Yes nghĩa là khách rời đi trong tháng chụp.
-Nếu dùng nguyên trạng thì mọi khách churn rơi vào cùng 1 tháng, không có xu hướng theo thời gian.
+The original table is a single snapshot: Churn = Yes means the customer left in the snapshot month.
+Used as is, every churner falls in the same month and there is no trend over time.
 
-Quy ước (dùng xuyên suốt dự án):
-- anchor_month  = tháng rời đi (khách churn) hoặc tháng snapshot (khách còn hoạt động).
+Conventions (used throughout the project):
+- anchor_month  = exit month (churners) or snapshot month (active customers).
 - signup_month  = anchor_month - tenure.
-- Hoá đơn tính từ signup_month + 1 đến anchor_month, nên mỗi khách có đúng `tenure` hoá đơn
-  (khớp TotalCharges ~ tenure x MonthlyCharges) và tháng churn chính là tháng có hoá đơn cuối.
-- tenure = 0: khách vừa ký trong tháng snapshot, chưa phát sinh hoá đơn (khớp với việc
-  TotalCharges bị trống ở đúng 11 khách này trong dữ liệu gốc).
+- Invoices run from signup_month + 1 to anchor_month, so each customer has exactly `tenure` invoices
+  (matching TotalCharges ~ tenure x MonthlyCharges) and the churn month is the month of the last invoice.
+- tenure = 0: the customer signed up in the snapshot month and has no invoice yet (matching the
+  blank TotalCharges of exactly these 11 customers in the original data).
 """
 import numpy as np
 import pandas as pd
@@ -42,13 +42,13 @@ RAW_TO_SNAKE = {
 
 
 def load_raw() -> pd.DataFrame:
-    # TotalCharges đọc dạng chuỗi để giữ nguyên 11 giá trị trống của nguồn gốc vào CRM.
+    # TotalCharges is read as text to carry the 11 blank source values into CRM unchanged.
     df = pd.read_csv(config.RAW_CSV, dtype={"TotalCharges": str})
     return df.rename(columns=RAW_TO_SNAKE)
 
 
 def churn_month_weights() -> tuple[list[pd.Period], np.ndarray, np.ndarray]:
-    """Trọng số chọn tháng rời đi cho khách churn: (các tháng, trọng số chung, trọng số Fiber)."""
+    """Weights for picking a churner's exit month: (months, general weights, Fiber weights)."""
     months = [config.CHURN_WINDOW_START + i for i in range(config.CHURN_WINDOW_MONTHS)]
     seasonal = np.array([
         1 + config.CHURN_SEASONALITY_AMPLITUDE * np.cos(2 * np.pi * (m.month - 1) / 12)
@@ -88,8 +88,8 @@ def build_customer_timeline(raw: pd.DataFrame, rng: np.random.Generator) -> pd.D
     df.loc[churned, "end_date"] = _random_day_in_month(df.loc[churned, "churn_month"], rng)
     df["end_date"] = pd.to_datetime(df["end_date"])
 
-    # MonthlyCharges là giá tại tháng có hoá đơn cuối cùng. Khách Fiber còn dùng dịch vụ sau
-    # sự kiện tăng giá thì giá trước sự kiện phải thấp hơn tương ứng.
+    # MonthlyCharges is the price in the last billed month. Fiber customers still active after
+    # the price increase must have a correspondingly lower price before it.
     df["price_before_event"] = np.where(
         df.is_fiber & (df["last_billed_month"] >= config.FIBER_PRICE_EVENT_MONTH),
         (df["monthly_charges"] / (1 + config.FIBER_PRICE_INCREASE)).round(2),

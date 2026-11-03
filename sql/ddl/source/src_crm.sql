@@ -1,16 +1,16 @@
 /*
-  Hệ thống nguồn mô phỏng: CRM (database src_crm).
+  Simulated source system: CRM (database src_crm).
 
-  Thiết kế cố ý "lỏng" giống một CRM đời cũ:
-  - customers KHÔNG có khoá chính trên customer_id, nên mới có chuyện trùng khách.
-  - Các cột Yes/No và ngày tháng lưu NVARCHAR vì màn hình nhập liệu không ràng buộc định dạng.
-  - total_charges giữ kiểu chuỗi như file gốc (có giá trị rỗng).
-  Kho dữ liệu (TelcoDW) sẽ phải tự xử lý các vấn đề này, không trông chờ nguồn sạch.
+  Deliberately "loose", like an old CRM:
+  - customers has NO primary key on customer_id, which is how duplicate customers appear.
+  - Yes/No and date columns are NVARCHAR because the entry screens do not enforce a format.
+  - total_charges stays text as in the original file (has blank values).
+  The warehouse (TelcoDW) has to handle these problems itself instead of expecting clean sources.
 */
 CREATE TABLE dbo.customers (
     customer_id     NVARCHAR(20)  NOT NULL,
     gender          NVARCHAR(20)  NULL,
-    senior_citizen  INT           NULL,     -- nguồn gốc dùng 0/1, khác quy ước Yes/No của các cột khác
+    senior_citizen  INT           NULL,     -- the original data uses 0/1, unlike the Yes/No convention of other columns
     partner         NVARCHAR(10)  NULL,
     dependents      NVARCHAR(10)  NULL,
     created_at      DATETIME2(0)  NULL,
@@ -24,8 +24,8 @@ CREATE TABLE dbo.contracts (
     contract_type     NVARCHAR(40)  NULL,
     paperless_billing NVARCHAR(10)  NULL,
     payment_method    NVARCHAR(60)  NULL,
-    monthly_charges   DECIMAL(10,2) NULL,  -- giá hiện tại của gói (tại tháng có hoá đơn cuối)
-    total_charges     NVARCHAR(20)  NULL,  -- số luỹ kế ghi nhận trong CRM, không đối soát với billing
+    monthly_charges   DECIMAL(10,2) NULL,  -- current plan price (as of the last billed month)
+    total_charges     NVARCHAR(20)  NULL,  -- running total recorded in CRM, not reconciled with billing
     tenure_months     INT           NULL,
     start_date        NVARCHAR(30)  NULL,
     end_date          NVARCHAR(30)  NULL,

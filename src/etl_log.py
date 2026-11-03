@@ -1,7 +1,7 @@
-"""Ghi nhật ký từng bước ETL vào dbo.etl_log.
+"""Log each ETL step to dbo.etl_log.
 
-Dùng kết nối autocommit riêng: khi bước nạp lỗi và transaction dữ liệu bị rollback,
-dòng log FAILED vẫn còn lại để điều tra.
+Uses its own autocommit connection: when a load step fails and its data transaction is rolled back,
+the FAILED log row still remains for investigation.
 """
 import uuid
 from contextlib import contextmanager
@@ -37,7 +37,7 @@ class EtlLogger:
         result = StepResult()
         try:
             yield result
-        # Bắt rộng có chủ đích: bất kỳ lỗi nào cũng phải để lại dòng FAILED, và luôn ném lại cho nơi gọi.
+        # Deliberately broad: any error must leave a FAILED row, and it is always re-raised to the caller.
         except Exception as exc:
             self._finish(log_id, "FAILED", result, f"{type(exc).__name__}: {exc}"[:4000])
             raise

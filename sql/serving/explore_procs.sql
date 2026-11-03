@@ -1,10 +1,10 @@
 /*
-  Lớp phục vụ trang Khám phá trên dashboard.
+  Serving layer for the dashboard's Explore page.
 
-  Bộ lọc truyền vào dạng JSON: [{"factor": "contract", "value": "Month-to-month"}, ...]
-  - Cùng một yếu tố, nhiều giá trị: HOẶC. Khác yếu tố: VÀ.
-  - Không dùng SQL động: kế hoạch thực thi được biên dịch một lần rồi tái sử dụng, và không có đường cho SQL injection.
-  - Mỗi lần gọi trả về nhiều result set trong một round-trip (không N+1).
+  Filters arrive as JSON: [{"factor": "contract", "value": "Month-to-month"}, ...]
+  - Several values of the same factor: OR. Different factors: AND.
+  - No dynamic SQL: the plan is compiled once and reused, and there is no path for SQL injection.
+  - Each call returns several result sets in one round trip (no N+1).
 */
 
 CREATE OR ALTER PROCEDURE mart.usp_explore_factors
@@ -36,8 +36,8 @@ BEGIN
     DECLARE @filtered_factors INT = (SELECT COUNT(DISTINCT factor_key) FROM #f);
 
     /*
-      fails = số yếu tố đang lọc mà khách KHÔNG thoả. Mỗi khách có đúng một giá trị cho mỗi yếu tố,
-      nên số yếu tố khớp = số dòng customer_factor join được với #f.
+      fails = number of filtered factors the customer does NOT satisfy. Each customer has exactly one value per factor,
+      so matched factors = rows of customer_factor that join to #f.
     */
     SELECT s.customer_key, s.is_churned, s.window_months, s.customer_status, s.current_mrr_usd,
            s.late_payment_rate, s.first_billing_month,
@@ -52,7 +52,7 @@ BEGIN
     WHERE s.in_analysis_window = 1;
     CREATE UNIQUE CLUSTERED INDEX ix_s ON #s (customer_key);
 
-    /* 1. KPI: nhóm đang chọn và toàn công ty trong cùng một lần quét */
+    /* 1. KPIs: selected group and whole company in a single scan */
     SELECT COUNT(*) AS all_customers, SUM(is_churned) AS all_churners, SUM(window_months) AS all_customer_months,
            SUM(CASE WHEN customer_status = N'Active' THEN 1 ELSE 0 END) AS all_active, SUM(current_mrr_usd) AS all_mrr,
            AVG(CAST(late_payment_rate AS FLOAT)) AS all_late_rate,
@@ -63,10 +63,10 @@ BEGIN
     FROM #s;
 
     /*
-      2. Tác động từng yếu tố trong ngữ cảnh hiện tại. Với yếu tố F, khách được tính khi thoả MỌI bộ lọc
-         khác F (bỏ qua bộ lọc của chính F để vẫn thấy đủ các giá trị của F):
-         - F không bị lọc, hoặc giá trị của khách nằm trong bộ lọc F  -> cần fails = 0
-         - F bị lọc và giá trị của khách nằm ngoài bộ lọc F             -> cần fails = 1 (chỉ trượt đúng F)
+      2. Impact of each factor in the current context. For factor F, a customer counts when it satisfies EVERY filter
+         other than F (F's own filter is ignored so all of F's values stay visible):
+         - F not filtered, or the customer's value is in F's filter  -> needs fails = 0
+         - F filtered and the customer's value is outside F's filter  -> needs fails = 1 (misses only F)
     */
     SELECT cf.factor_key, cf.value, MIN(cf.value_sort) AS value_sort,
            COUNT(*) AS customers, SUM(s.is_churned) AS churners,
@@ -78,7 +78,7 @@ BEGIN
     WHERE s.fails = CASE WHEN ff.factor_key IS NULL OR fv.value IS NOT NULL THEN 0 ELSE 1 END
     GROUP BY cf.factor_key, cf.value;
 
-    /* 3. Xu hướng theo tháng: nhóm đang chọn và toàn công ty, kèm chỉ tiêu */
+    /* 3. Monthly trend: selected group and whole company, with targets */
     SELECT d.year_month,
            COUNT(*) AS all_customers, SUM(CAST(f.is_churn_month AS INT)) AS all_churners, SUM(f.amount_usd) AS all_mrr,
            SUM(CASE WHEN f.is_churn_month = 1 THEN f.amount_usd ELSE 0 END) AS all_mrr_lost,
@@ -93,7 +93,7 @@ BEGIN
     GROUP BY d.year_month
     ORDER BY d.year_month;
 
-    /* 4. Ticket theo tháng */
+    /* 4. Tickets per month */
     SELECT d.year_month, COUNT(*) AS all_tickets,
            SUM(CASE WHEN t.category = N'Billing' THEN 1 ELSE 0 END) AS all_billing,
            SUM(s.sel) AS sel_tickets,
@@ -104,8 +104,8 @@ BEGIN
     GROUP BY d.year_month
     ORDER BY d.year_month;
 
-    /* 5. Retention: khách còn hoạt động ở tháng thứ k kể từ kỳ cước đầu (chỉ cohort bắt đầu trong cửa sổ,
-          tránh thiên lệch sống sót) */
+    /* 5. Retention: customers still active k months after their first bill (only cohorts that start inside the window,
+          to avoid survivorship bias) */
     SELECT DATEDIFF(MONTH, s.first_billing_month, d.[date]) AS k, COUNT(*) AS all_active, SUM(s.sel) AS sel_active
     FROM mart.fact_billing f
     JOIN mart.dim_date d ON d.date_key = f.date_key
@@ -113,7 +113,7 @@ BEGIN
     WHERE s.first_billing_month >= @window_start
     GROUP BY DATEDIFF(MONTH, s.first_billing_month, d.[date]);
 
-    /* 6. Mẫu số retention: mỗi khách quan sát được tối đa bao nhiêu tháng tính tới snapshot */
+    /* 6. Retention denominator: how many months each customer can be observed up to the snapshot */
     SELECT DATEDIFF(MONTH, first_billing_month, @snapshot_month) AS max_k, COUNT(*) AS all_customers, SUM(sel) AS sel_customers
     FROM #s
     WHERE first_billing_month >= @window_start
@@ -122,10 +122,10 @@ END
 GO
 
 /*
-  Danh sách khách cần chăm sóc: lọc, phân loại, tìm, sắp xếp và chia trang đều làm ở server.
-  Trả về 2 result set: (1) tổng số khách trong nhóm, số khách khớp, ngưỡng "cước cao";
-  (2) đúng một trang dữ liệu. Không SQL động: cột sắp xếp chọn bằng CASE trên danh sách cố định.
-  @page_size = 0 nghĩa là lấy hết các dòng khớp (dùng cho xuất CSV).
+  Customer list for follow-up: filtering, quick filters, search, sorting and paging all run on the server.
+  Returns 2 result sets: (1) group size, matched count, "high charge" threshold;
+  (2) exactly one page of rows. No dynamic SQL: the sort column is chosen with CASE over a fixed list.
+  @page_size = 0 returns every matching row (used for CSV export).
 */
 CREATE OR ALTER PROCEDURE mart.usp_explore_customers
     @filters    NVARCHAR(MAX) = N'[]',
@@ -148,7 +148,7 @@ BEGIN
     DECLARE @q TABLE (k VARCHAR(20) PRIMARY KEY);
     INSERT INTO @q (k) SELECT DISTINCT CAST(value AS VARCHAR(20)) FROM OPENJSON(@quick);
 
-    -- Nhóm khách theo bộ lọc của trang Khám phá (cùng logic với mart.usp_explore).
+    -- Customer group from the Explore page filters (same logic as mart.usp_explore).
     SELECT s.customer_id, s.contract_type, s.internet_service, s.payment_method, s.tenure_months,
            s.current_mrr_usd, s.tickets, s.billing_tickets, s.late_payment_rate, s.tech_support, s.addon_count
     INTO #g
@@ -160,7 +160,7 @@ BEGIN
     WHERE s.in_analysis_window = 1 AND s.customer_status = N'Active'
       AND ISNULL(mt.matched, 0) = @filtered_factors;
 
-    -- Phân loại "cước cao" = top 25% cước trong chính nhóm đang xem, nên ngưỡng đổi theo bộ lọc trang.
+    -- "High charge" = top 25% of charges within the group being viewed, so the threshold follows the page filters.
     DECLARE @mrr_p75 DECIMAL(10,2) =
         (SELECT TOP (1) PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY current_mrr_usd) OVER () FROM #g);
 
@@ -182,7 +182,7 @@ BEGIN
            tickets, billing_tickets, late_payment_rate, tech_support, addon_count
     FROM #v
     ORDER BY
-        -- Cột số và cột chữ tách thành hai CASE để không bị ép kiểu lẫn nhau.
+        -- Numeric and text columns use separate CASE expressions so they are not cast to each other's type.
         CASE WHEN @sort_desc = 1 THEN CASE @sort_key
             WHEN 'current_mrr_usd' THEN current_mrr_usd WHEN 'tenure_months' THEN tenure_months
             WHEN 'billing_tickets' THEN billing_tickets WHEN 'tickets' THEN tickets

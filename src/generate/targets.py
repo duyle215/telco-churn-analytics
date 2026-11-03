@@ -1,9 +1,10 @@
-"""Sinh file chỉ tiêu do "phòng Finance" nhập tay (targets.xlsx).
+"""Generate the target file typed by hand by "the Finance team" (targets.xlsx).
 
-Chỉ tiêu được dẫn xuất từ số thực tế của dữ liệu đã tái dựng để luôn nằm trong vùng hợp lý
-(hơi thách thức hơn thực tế), thay vì bịa một con số không liên quan:
-- Churn rate: năm 2024 = 90% mức churn bình quân thực tế 2024; năm 2025 giảm thêm 8%.
-- MRR: Finance lập kế hoạch đầu mỗi năm từ MRR thực tế tháng 12 năm trước, cộng tăng trưởng cố định/tháng.
+Targets are derived from the reconstructed actuals so they stay in a plausible range
+(a bit more demanding than actuals), instead of inventing an unrelated number:
+- Churn rate: 2024 = 90% of the actual 2024 average churn; 2025 a further 8% lower.
+  Missing the churn target is therefore built in, and is not reported as a finding.
+- MRR: Finance plans each year from the actual December MRR of the previous year, plus fixed monthly growth.
 """
 import pandas as pd
 from openpyxl import Workbook
@@ -43,13 +44,14 @@ def build_targets(actuals: pd.DataFrame) -> pd.DataFrame:
 
 
 def write_targets_excel(targets: pd.DataFrame, path=config.TARGETS_XLSX) -> list[dict]:
-    """Ghi file Excel giống file nhập tay thật; trả về danh sách lỗi đã cố ý cài để ghi log."""
+    """Write an Excel file that looks hand-typed; return the list of deliberately injected errors for the log."""
     wb = Workbook()
     wb.remove(wb.active)
     notes = {pd.Period("2025-03", "M"): "Áp dụng giá Fiber mới từ T3",
              pd.Period("2024-08", "M"): "Billing báo sự cố, số liệu T8 cập nhật sau"}
 
-    # Hai năm do hai người khác nhau nhập nên tiêu đề cột và cách ghi tháng không thống nhất.
+    # Kept in Vietnamese as typed by the local Finance team: the cleaning layer has to map these headers.
+    # Two years typed by two different people, so headers and month formats are inconsistent.
     layouts = {
         2024: {"headers": ["Tháng ", "Churn Rate mục tiêu (%)", "MRR  Target (USD)", "Ghi chú"],
                "month_fmt": lambda p: p.to_timestamp().to_pydatetime()},
@@ -79,12 +81,12 @@ def write_targets_excel(targets: pd.DataFrame, path=config.TARGETS_XLSX) -> list
     return [
         {"source_system": "finance_excel", "object": "targets.xlsx", "column": "(header)",
          "error_type": "non_standard_header", "rows_affected": 2,
-         "description": "Mỗi sheet có 3 dòng tiêu đề/ghi chú phía trên, header thật nằm ở dòng 4; "
-                        "tên cột có dấu, khoảng trắng thừa, đơn vị trong tên và khác nhau giữa sheet 2024/2025"},
+         "description": "Each sheet has 3 title/note rows above the real header on row 4; "
+                        "column names have diacritics, extra spaces, units in the name, and differ between the 2024/2025 sheets"},
         {"source_system": "finance_excel", "object": "targets.xlsx", "column": "Tháng / Thang",
          "error_type": "mixed_date_format", "rows_affected": 12,
-         "description": "Sheet 2024 ghi tháng dạng ngày Excel; sheet 2025 ghi dạng chuỗi 'Tmm/yyyy' (12 dòng)"},
+         "description": "The 2024 sheet stores the month as an Excel date; the 2025 sheet as the text 'Tmm/yyyy' (12 rows)"},
         {"source_system": "finance_excel", "object": "targets.xlsx", "column": "Churn Rate mục tiêu (%)",
          "error_type": "unit_inconsistency", "rows_affected": 24,
-         "description": "Churn rate nhập theo đơn vị phần trăm (1.2 nghĩa là 1.2%), không phải tỷ lệ 0.012"},
+         "description": "Churn rate typed in percent (1.2 means 1.2%), not as the ratio 0.012"},
     ]

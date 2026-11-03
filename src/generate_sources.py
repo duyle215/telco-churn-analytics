@@ -1,15 +1,15 @@
-"""GIAI ĐOẠN 1: sinh toàn bộ dữ liệu nguồn mô phỏng từ bộ Telco Customer Churn.
+"""STAGE 1: generate every simulated source from the Telco Customer Churn dataset.
 
-Chạy:  python -m src.generate_sources
+Run:  python -m src.generate_sources
 
-Đầu ra:
-- SQL Server: database src_crm (customers, contracts, services) và src_billing (invoices, payments)
-- data/source/targets.xlsx        chỉ tiêu do Finance nhập tay
-- data/source/support_tickets.csv export từ hệ thống ticket
-- data/source/injected_errors.csv danh sách và số lượng lỗi đã cố ý cài
+Outputs:
+- SQL Server: database src_crm (customers, contracts, services) and src_billing (invoices, payments)
+- data/source/targets.xlsx        targets typed by Finance
+- data/source/support_tickets.csv export from the ticket system
+- data/source/injected_errors.csv list and counts of the deliberately injected errors
 
-Mỗi bước sinh có random generator riêng tách từ cùng một seed, để sửa một bước
-(ví dụ đổi tham số ticket) không làm xê dịch dữ liệu của các bước khác.
+Each step has its own random generator spawned from the same seed, so changing one step
+(e.g. a ticket parameter) does not shift the data of the other steps.
 """
 import numpy as np
 import pandas as pd
@@ -42,9 +42,9 @@ def main() -> None:
 
     log.add("crm", "src_crm.dbo.contracts", "total_charges", "blank_value_inherited",
             int(contracts["total_charges"].str.strip().eq("").sum()),
-            "Có sẵn trong dữ liệu gốc: TotalCharges rỗng ở khách tenure = 0")
+            "Present in the original data: blank TotalCharges for tenure = 0 customers")
     log.add("crm", "src_crm.dbo.customers", "senior_citizen", "inconsistent_boolean_inherited", len(customers),
-            "Có sẵn trong dữ liệu gốc: senior_citizen dùng 0/1 trong khi các cột cờ khác dùng Yes/No")
+            "Present in the original data: senior_citizen uses 0/1 while the other flags use Yes/No")
 
     customers = errors.duplicate_customers(customers, rng_error, log)
     for col, rate in (("partner", 0.06), ("dependents", 0.06)):
@@ -109,22 +109,22 @@ def write_billing(invoices: pd.DataFrame, payments: pd.DataFrame) -> None:
 
 
 def print_summary(tl, actuals, customers, contracts, services, invoices, payments, ticket_df, error_log) -> None:
-    print("== Số dòng đã ghi")
+    print("== Rows written")
     for name, df in [("src_crm.customers", customers), ("src_crm.contracts", contracts),
                      ("src_crm.services", services), ("src_billing.invoices", invoices),
                      ("src_billing.payments", payments), ("support_tickets.csv", ticket_df)]:
         print(f"  {name:<24}{len(df):>9,}")
 
-    print("== Khách churn theo tháng (tổng / Fiber), trước khi cài lỗi")
+    print("== Churners per month (total / Fiber), before error injection")
     by_month = tl.dropna(subset=["churn_month"]).groupby("churn_month").agg(
         total=("customer_id", "size"), fiber=("is_fiber", "sum"))
     print(by_month.T.to_string())
 
     window = actuals.loc[config.CHURN_WINDOW_START:config.SNAPSHOT_MONTH]
-    print("== KPI thực tế trong cửa sổ 24 tháng (dữ liệu chuẩn, chưa cài lỗi)")
+    print("== Actual KPIs in the 24-month window (clean data, before error injection)")
     print(window[["active_customers", "churners", "churn_rate", "mrr_usd"]].round(4).to_string())
 
-    print("== Lỗi đã cài")
+    print("== Injected errors")
     print(error_log[["error_id", "object", "column", "error_type", "rows_affected"]].to_string(index=False))
 
 

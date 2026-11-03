@@ -1,93 +1,93 @@
-# Giai đoạn 5: Dashboard
+# Stage 5: Dashboard
 
-Dashboard web thay cho Power BI (máy phát triển chưa cài Power BI Desktop). Nó đọc star schema trong
-`TelcoDW.mart` và không tự tính chỉ số: mọi phép tính nằm trong SQL.
+A web dashboard instead of Power BI (Power BI Desktop is not installed on the development machine). It reads the
+star schema in `TelcoDW.mart` and computes no metrics itself: every calculation lives in SQL.
 
-**Chạy:** `python -m src.dashboard.app` rồi mở <http://127.0.0.1:5000>.
+**Run:** `python -m src.dashboard.app`, then open <http://127.0.0.1:5000>.
 
-## 1. Ba trang
+## 1. Three pages
 
-| Trang | Cho ai | Bố cục |
+| Page | Audience | Layout |
 |---|---|---|
-| **Khám phá churn** | Lãnh đạo, Marketing, CSKH | Vừa 1 màn hình (khung tham chiếu: 1 trang A4 ngang) |
-| **What-if Scenario** | Lãnh đạo, Marketing | Vừa 1 màn hình |
-| **Data Quality** | Đội dữ liệu, người cần tra cứu | Trang tra cứu, được phép dài; phần đầu vẫn tóm tắt gọn |
+| **Churn explorer** | Management, Marketing, Customer care | Fits one screen (reference frame: one landscape A4 page) |
+| **What-if Scenario** | Management, Marketing | Fits one screen |
+| **Data Quality** | Data team, anyone looking things up | Reference page, may be long; the top still summarises |
 
-Ba trang báo cáo tĩnh cũ (Overview, Drivers, Risk) được gộp vào trang Khám phá: mỗi trang tĩnh trước đây
-chỉ là một tổ hợp bộ lọc cố định, nay trở thành một "góc nhìn có sẵn" hoặc một cú bấm.
+Three earlier static report pages (Overview, Drivers, Risk) were merged into the explorer: each static page was only
+a fixed filter combination, and is now a "saved view" or a single click.
 
-**Nguyên tắc bố cục cho hai trang chính:** 1 câu kết luận, 4 KPI, tối đa 2 khối nội dung. Chi tiết chỉ mở khi cần
-(popover, drawer), không bắt người xem cuộn trang. Kiểm tra bằng ảnh chụp khung 1440×900: chiều cao trang
-bằng đúng chiều cao cửa sổ.
+**Layout rule for the two main pages:** one summary sentence, a KPI row, a few charts. Details only open on demand
+(popover, drawer); the viewer never has to scroll. Checked with a 1440x900 screenshot: page height equals window height.
 
-## 2. Trang Khám phá
+## 2. Churn explorer
 
-Bố cục kiểu trang báo cáo Power BI: một lưới nhiều hình nhỏ, ít chữ, vừa một màn hình (khung 16:9 / A4 ngang).
+A Power BI-style report page: a grid of small charts, little text, one screen (16:9 / landscape A4 frame).
 
 ```
-┌ Góc nhìn ▾ │ Hợp đồng ▾ │ Internet ▾ │ Gắn bó ▾ │ Dịch vụ kèm ▾ │ Thanh toán ▾ │ Hỗ trợ KT ▾ │ Khác ▾ │      Xoá lọc ┐
-│ 1 dòng tóm tắt tự sinh                                                                                        │
-├ KPI+sparkline: Khách │ Đã rời đi 24 th │ Rời đi tháng gần nhất │ MRR tháng gần nhất │ MRR dự kiến mất/tháng ┤
-├ Tỷ lệ rời đi theo tháng (đường)      │ MRR theo tháng (cột)          │ Yếu tố tác động mạnh nhất       ┤
-├ Rời đi theo hợp đồng │ theo gắn bó   │ Donut: khách rời đi đến từ đâu │ (Đang lọc ✕ · ô ▲/▼ · cuộn dọc) ┘
+┌ View ▾ │ Contract ▾ │ Internet ▾ │ Tenure ▾ │ Add-ons ▾ │ Payment ▾ │ Tech support ▾ │ More ▾ │   Clear filters ┐
+│ 1 generated summary line                                                                                   │
+├ KPI+sparkline: Customers │ Churn rate (monthly) │ MRR │ MRR lost to churn │ ARPU                           ┤
+├ Monthly churn rate (line)          │ Monthly MRR (bars)             │ Factors that matter most            ┤
+├ Churn by contract │ Retention curve │ Donut: where churners come from │ (Filtering ✕ · ▲/▼ tiles · scroll)┘
 ```
 
-- **Lọc:** thanh lọc một hàng, không thanh cuộn (6 yếu tố chính + "Khác"). Cùng một yếu tố chọn nhiều giá trị là HOẶC, khác yếu tố là VÀ. Bảng chọn hiện sẵn số khách và tỷ lệ rời đi của từng lựa chọn. Bộ lọc lưu trên URL.
-- **Hai loại câu hỏi:** các biểu đồ cột trả lời *nhóm nào rời đi với tỷ lệ cao*; donut trả lời *khách rời đi đến từ đâu* (cơ cấu). Ví dụ Fiber rời đi 41,9% nhưng chiếm 69% tổng số khách rời đi, vì vừa rời đi nhiều vừa đông khách.
-- **Lọc chéo như Power BI:** bấm một cột (hợp đồng, gắn bó) hoặc một lát donut (internet) để lọc theo giá trị đó, bấm lại để bỏ. Cột đang chọn tô đậm, cột khác làm mờ; đường đứt nét là mức rời đi chung của công ty.
-- **Bỏ chọn ở mọi nơi:** ✕ trên thanh lọc, bỏ tick trong bảng chọn, bấm lại cột đậm, hoặc ✕ ở hàng "Đang lọc" trong panel.
-- **5 thẻ KPI cùng một khuôn** (Khách đang có, Tỷ lệ rời đi, MRR, MRR mất do rời đi, ARPU): giá trị là tháng gần nhất; nhãn là thay đổi so với tháng trước, màu theo ý nghĩa (khách/MRR/ARPU tăng là tốt, tỷ lệ rời đi/MRR mất tăng là xấu); sparkline 24 tháng của chính chỉ số đó; dòng chân so với toàn công ty khi đang lọc, hoặc với chỉ tiêu/bình quân khi xem toàn công ty.
-- **Panel yếu tố tác động mạnh nhất:** mọi yếu tố xếp từ mạnh đến yếu, cuộn dọc trong panel. Mỗi yếu tố có ô ▲ nhánh rời đi nhiều nhất và ô ▼ ít nhất, bấm để lọc. Không xếp hạng nhánh dưới 30 khách (nhóm quá nhỏ thì hạ xuống 5 khách và gắn nhãn "Mẫu nhỏ"); bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet.
-- **Danh sách khách và CSV dùng lại đúng bộ lọc trang:** nút "Xem & tải CSV" trên thanh lọc mở khung xem trước (khách đang hoạt động theo bộ lọc trang). Trong khung có thể thu hẹp thêm bằng lọc nhanh (cước cao top 25%, có khiếu nại hoá đơn, hay trả trễ ≥ 20%, không hỗ trợ KT, khách năm đầu), tìm mã, sắp xếp, chuyển trang; nút "Tải CSV n khách" xuất đúng những dòng đang khớp. Lọc, phân loại, sắp xếp, chia trang (`OFFSET/FETCH`) và tạo CSV đều chạy ở server (`mart.usp_explore_customers`); trình duyệt chỉ gửi tham số qua AJAX và nhận về một trang 50 dòng. Nút "Xem mọi nhánh của từng yếu tố" ở chân panel mở đủ 13 yếu tố.
+- **Filtering:** a one-row filter bar without a scrollbar (6 main factors + "More"). Several values of one factor are OR, different factors are AND. The picker shows each option's customer count and churn rate. Filters are kept in the URL.
+- **Two kinds of question:** the bar chart answers *which group churns at a high rate*; the donut answers *where churned customers come from* (mix). Example: Fiber churns 41.9% but makes up 69% of all churners, because it both churns more and is large.
+- **When do customers leave:** a cohort retention curve, not churn by tenure band. A churner's tenure stops at the exit month while active customers keep ageing, so churn by tenure band is biased towards short tenure. The curve only uses customers whose first bill is in the analysis window and, at each month, only customers who could be observed that long.
+- **Power BI-style cross-filtering:** click a bar (contract) or a donut slice (internet) to filter on that value, click again to remove it. The selected bar stays solid, the others fade; the dashed line is the company-wide churn rate.
+- **Remove filters anywhere:** ✕ on the filter bar, untick in the picker, click the solid bar again, or ✕ in the "Filtering" row of the panel.
+- **Five KPI cards, one template** (Customers, Churn rate (monthly), MRR, MRR lost to churn, ARPU): the value is the latest month; the badge is the change vs the previous month, coloured by meaning (customers/MRR/ARPU up is good, churn rate/MRR lost up is bad); the sparkline shows 24 months of the same metric; the footer compares with the whole company when filtered, or with the target/average otherwise.
+- **Factors that matter most:** every factor ranked from strongest to weakest, scrolling inside the panel. Each factor has a ▲ tile for the option that churns most and a ▼ tile for the least, click to filter. Options under 30 customers are not ranked (for a tiny group the bar drops to 5 with a "Small sample" label); "No internet service" is skipped under internet-dependent factors. Tenure is a filter but is not ranked, for the reason above.
+- **Customer list and CSV reuse the page filters:** "View & download CSV" opens a preview (active customers matching the page filters). It can be narrowed with quick filters (top 25% charge, has billing complaints, often late ≥ 20%, no tech support, first-year customers), searched, sorted and paged; "Download CSV" exports exactly the matching rows. Filtering, quick filters, sorting, paging (`OFFSET/FETCH`) and CSV generation all run on the server (`mart.usp_explore_customers`); the browser only sends parameters via AJAX and receives one page of 50 rows. "See every option of every factor" at the bottom of the panel opens all 13 factors.
 
-## 3. Mỗi hình trả lời một câu hỏi
+## 3. Each chart answers one question
 
-Mỗi hình có dòng 1 là **câu hỏi kinh doanh**, dòng 2 là **câu trả lời** tính từ dữ liệu đang lọc (đổi theo bộ lọc).
+Each chart has the **business question** on line 1 and the **answer** computed from the filtered data on line 2 (it changes with the filters).
 
-| # | Câu hỏi | Chỉ số | Nguồn (result set của `mart.usp_explore`) | Hình | Câu trả lời tự sinh |
+| # | Question | Metric | Source (result set of `mart.usp_explore`) | Chart | Generated answer |
 |---|---|---|---|---|---|
-| 1 | Tỷ lệ rời đi đang tăng hay giảm? | khách rời đi / khách trong tháng | 3 · xu hướng theo tháng | Đường, so với toàn công ty hoặc chỉ tiêu | Đỉnh, tháng gần nhất so với bình quân |
-| 2 | Doanh thu định kỳ có đạt chỉ tiêu không? (khi lọc: nhóm đóng góp bao nhiêu?) | tổng cước tháng, chỉ tiêu Finance | 3 · xu hướng theo tháng | Cột + đường chỉ tiêu | Số tháng đạt; chênh lệch tháng gần nhất (hoặc tỷ trọng MRR) |
-| 3 | Loại hợp đồng nào dễ rời đi nhất? | tỷ lệ rời đi 24 tháng theo hợp đồng | 2 · thống kê theo yếu tố | Thanh ngang, lọc chéo | Nhánh cao nhất gấp mấy lần nhánh thấp nhất |
-| 4 | Khách thường rời đi ở giai đoạn nào? | tỷ lệ rời đi theo nhóm gắn bó | 2 · thống kê theo yếu tố | Cột, lọc chéo | Giai đoạn rời đi nhiều nhất và ít nhất |
-| 5 | Khách rời đi đến từ đâu? | tỷ trọng khách rời đi theo loại internet | 2 · thống kê theo yếu tố | Donut, lọc chéo | Phần lớn nhất chiếm bao nhiêu % |
-| 6 | Yếu tố nào tạo khác biệt lớn nhất? | chênh lệch tỷ lệ rời đi giữa nhánh cao và thấp nhất, 13 yếu tố | 2 · thống kê theo yếu tố | Danh sách xếp hạng | Yếu tố đứng đầu và hai nhánh của nó |
-| KPI | Nhóm lớn cỡ nào, rời đi bao nhiêu, mất bao nhiêu tiền? | khách, tỷ lệ rời đi, MRR, MRR dự kiến mất | 1 · KPI + 3 · xu hướng | Thẻ số + sparkline | So với tháng trước / mức chung |
+| 1 | Is the churn rate rising or falling? | churners / customers in the month | 3 · monthly trend | Line, vs company or target | Peak, latest month vs average |
+| 2 | Is recurring revenue on target? (filtered: how much does this group bring?) | total monthly charges, Finance target | 3 · monthly trend | Bars + target line | Months on target; gap in the latest month (or MRR share) |
+| 3 | Which contract type churns most? | 24-month churn share by contract | 2 · per-factor stats | Horizontal bars, cross-filter | How many times the highest option is the lowest |
+| 4 | When do new customers leave? | share still billed k months after the first bill | 5 · retention + 6 · retention denominator | Line, vs company when filtered | Share gone after the first bill, share still active after 12 months |
+| 5 | Where do churned customers come from? | share of churners by internet type | 2 · per-factor stats | Donut, cross-filter | Largest share in % |
+| 6 | Which factor makes the biggest difference? | churn gap between the highest and lowest option, 12 ranked factors | 2 · per-factor stats | Ranked list | Top factor and its two options |
+| KPI | How big is the group, how much does it churn, how much money is lost? | customers, churn rate, MRR, expected MRR loss | 1 · KPI + 3 · trend | Number cards + sparklines | Vs previous month / overall |
 
-**Cách tổ chức truy vấn:** gom theo **mức chi tiết (grain)** của dữ liệu, không tách theo từng hình.
-Câu hỏi 1, 2 và sparkline KPI cùng cần số liệu theo tháng, nên dùng chung một result set. Câu hỏi 3–6 cùng cần
-"tỷ lệ rời đi của từng nhánh trong ngữ cảnh lọc", nên dùng chung một result set (một lần quét bảng cầu nối).
-Nếu viết mỗi hình một truy vấn thì sẽ thành 6–8 lượt gọi (N+1) và quét bảng fact nhiều lần cho cùng một kết quả.
+**How the queries are organised:** grouped by the **grain** of the data, not by chart.
+Questions 1, 2 and the KPI sparklines all need monthly figures, so they share one result set. Questions 3, 5 and 6 all need
+"the churn rate of each option in the filtered context", so they share one result set (one scan of the bridge table).
+Writing one query per chart would mean 6-8 calls (N+1) and scanning the fact table several times for the same result.
 
-**Phân công:** định nghĩa chỉ số (tử số, mẫu số, cửa sổ thời gian) nằm trong SQL, là nguồn sự thật duy nhất.
-Giao diện chỉ chọn số cần nói (lớn nhất, nhỏ nhất, tháng gần nhất) và diễn đạt thành câu.
+**Division of work:** metric definitions (numerator, denominator, time window) live in SQL, the single source of truth.
+The UI only picks which numbers to mention (largest, smallest, latest month) and phrases them as a sentence.
 
-## 4. Hiệu năng truy vấn
+## 4. Query performance
 
-Mỗi lần đổi bộ lọc chỉ gọi **1 stored procedure, 1 round-trip** (`mart.usp_explore`), không có N+1:
+Each filter change calls **1 stored procedure, 1 round trip** (`mart.usp_explore`), with no N+1:
 
-| Kỹ thuật | Vì sao |
+| Technique | Why |
 |---|---|
-| Stored procedure tĩnh, bộ lọc truyền dạng JSON (`OPENJSON`) | Kế hoạch thực thi biên dịch một lần rồi tái sử dụng; không có SQL động nên không có đường cho SQL injection |
-| Một lượt gọi trả nhiều result set (KPI, tác động từng yếu tố, xu hướng...) | Một round-trip thay vì nhiều |
-| Nhóm đang chọn và toàn công ty tính trong cùng một lần quét (`SUM(CASE WHEN sel = 1 ...)`) | Không chạy truy vấn thứ hai cho "toàn công ty" |
-| Bảng cầu nối `mart.customer_factor` (khách × yếu tố × giá trị) | Bộ lọc tuỳ ý chỉ là một phép join với bảng bộ lọc; tác động của 13 yếu tố tính trong một lần gom nhóm thay vì 13 truy vấn |
-| `mart.customer_snapshot` (bản vật lý hoá của view hồ sơ khách) | View phải gom 228 nghìn dòng fact mỗi lần đọc (~2-3 giây); bảng snapshot nạp một lần mỗi batch ETL |
-| Columnstore index trên `fact_billing`, `fact_tickets`, `customer_factor` | Batch mode: bước tính tác động giảm từ 260 ms xuống 35 ms |
-| Danh sách khách phân trang ở server (`OFFSET/FETCH`), sắp xếp bằng `CASE` trên danh sách cột cho phép, CSV do server tạo | Mỗi lần chỉ trả 50 dòng thay vì cả nhóm (tới ~5.200 dòng, 1,4 MB); không SQL động |
-| Cache phía server theo batch ETL + bộ lọc | Bộ lọc đã từng xem trả về ngay (~2 ms); chạy lại ETL là cache tự làm mới |
-| Gộp các cú bấm liên tiếp (120 ms) và huỷ request cũ (`AbortController`) | Bấm nhanh nhiều lựa chọn không tạo hàng loạt request |
+| Static stored procedure, filters passed as JSON (`OPENJSON`) | The plan is compiled once and reused; no dynamic SQL, so no path for SQL injection |
+| One call returns several result sets (KPIs, per-factor impact, trend...) | One round trip instead of many |
+| Selected group and whole company computed in the same scan (`SUM(CASE WHEN sel = 1 ...)`) | No second query for "whole company" |
+| Bridge table `mart.customer_factor` (customer x factor x value) | Any filter is a single join with the filter table; the impact of 13 factors is one grouping instead of 13 queries |
+| `mart.customer_snapshot` (materialised customer profile view) | The view aggregates 228 thousand fact rows on every read (~2-3 s); the snapshot table loads once per ETL batch |
+| Columnstore index on `fact_billing`, `fact_tickets`, `customer_factor` | Batch mode: the impact step dropped from 260 ms to 35 ms |
+| Server-side paging of the customer list (`OFFSET/FETCH`), sorting with `CASE` over an allow-list of columns, server-built CSV | Only 50 rows per call instead of the whole group (up to ~5,200 rows, 1.4 MB); no dynamic SQL |
+| Server-side cache per ETL batch + filters | A filter seen before returns immediately (~2 ms); re-running the ETL refreshes the cache |
+| Merging quick successive clicks (120 ms) and cancelling stale requests (`AbortController`) | Clicking several options quickly does not fire a burst of requests |
 
-Số đo trên máy phát triển: ~600 ms với SQL động lúc đầu, **~290 ms** sau khi tối ưu (lần đầu một bộ lọc),
-**~2 ms** khi trúng cache. Đo từng câu lệnh bằng `sys.dm_exec_query_stats`.
+Measured on the development machine: ~600 ms with the initial dynamic SQL, **~290 ms** after optimisation (first time a
+filter is used), **~2 ms** on a cache hit. Per-statement timings from `sys.dm_exec_query_stats`.
 
-**Kiểm chứng tính đúng:** bộ lọc "hợp đồng tháng + Fiber + trả tay" ra 1.508 khách, churn 5,46%/tháng,
-MRR $53.883, MRR dự kiến mất $2.941, khớp phân khúc rủi ro trong
-[06_risk_segments.sql](../sql/analysis/06_risk_segments.sql). Không lọc thì số theo tháng khớp
-`mart.v_kpi_monthly` (ví dụ 2025-04: 4.814 khách, 149 rời đi).
+**Correctness check:** the filter "month-to-month + Fiber + manual payment" gives 1,508 customers, churn 5.46%/month,
+MRR $53,883, expected MRR loss $2,941, matching the risk segment in
+[06_risk_segments.sql](../sql/analysis/06_risk_segments.sql). Without filters the monthly figures match
+`mart.v_kpi_monthly` (e.g. 2025-04: 4,814 customers, 149 churners).
 
-## 5. Quy tắc trình bày
+## 5. Presentation rules
 
-- Nhãn tiếng Việt cho người không chuyên ("Theo tháng", "Trả tay", "Đã rời đi (24 tháng)").
-- Màu: xanh là nhóm đang chọn, xám là toàn công ty, nét đứt là chỉ tiêu. Xanh lá/đỏ chỉ dùng cho nhánh rời đi ít/nhiều nhất và luôn có số đi kèm.
-- Không dùng biểu đồ hai trục tung; mọi biểu đồ có tooltip; chế độ sáng/tối có bộ màu riêng; dưới 900 px bố cục chuyển thành một cột.
+- Plain-language labels for non-specialists ("Month-to-month", "Manual payment", "Churned within the 24-month window"), and every rate says its unit (per month or within the window).
+- Colour: blue is the selected group, grey the whole company, dashed lines are targets. Green/red only mark the options that churn least/most, always with a number next to them.
+- No dual-axis charts; every chart has a tooltip; light and dark themes have their own palettes; below 900 px the layout becomes a single column.

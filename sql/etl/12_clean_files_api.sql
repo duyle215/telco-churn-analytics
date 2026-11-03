@@ -1,4 +1,4 @@
-/* stg -> clean cho các nguồn file và API: support tickets (CSV), targets (Excel), tỷ giá (API). */
+/* stg -> clean for file and API sources: support tickets (CSV), targets (Excel), exchange rates (API). */
 
 CREATE OR ALTER PROCEDURE clean.usp_load_tickets @batch_id UNIQUEIDENTIFIER
 AS
@@ -10,7 +10,7 @@ BEGIN
         CREATE TABLE #reject (stg_row_id BIGINT, business_key NVARCHAR(100), reason_code VARCHAR(50),
                               reason_detail NVARCHAR(400), raw_record NVARCHAR(MAX));
 
-        -- CSV không có khái niệm NULL: chuỗi rỗng ở resolved_at nghĩa là ticket chưa đóng.
+        -- CSV has no NULL: an empty resolved_at means the ticket is still open.
         SELECT s.stg_row_id,
                LTRIM(RTRIM(s.ticket_id)) AS ticket_id,
                LTRIM(RTRIM(s.customer_id)) AS customer_id,
@@ -27,24 +27,24 @@ BEGIN
         FROM stg.ticket_support_tickets s;
         SET @read = @@ROWCOUNT;
 
-        UPDATE #t SET reject_reason = 'MISSING_KEY', reject_detail = N'ticket_id hoặc customer_id rỗng'
+        UPDATE #t SET reject_reason = 'MISSING_KEY', reject_detail = N'ticket_id or customer_id is empty'
         WHERE NULLIF(ticket_id, N'') IS NULL OR NULLIF(customer_id, N'') IS NULL;
 
         WITH ranked AS (
             SELECT reject_reason, reject_detail, ROW_NUMBER() OVER (PARTITION BY ticket_id ORDER BY stg_row_id) AS rn
             FROM #t WHERE reject_reason IS NULL
         )
-        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Trùng ticket_id' WHERE rn > 1;
+        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Duplicate ticket_id' WHERE rn > 1;
 
-        UPDATE t SET reject_reason = 'ORPHAN_CUSTOMER', reject_detail = N'customer_id không có trong CRM'
+        UPDATE t SET reject_reason = 'ORPHAN_CUSTOMER', reject_detail = N'customer_id not found in CRM'
         FROM #t t
         WHERE t.reject_reason IS NULL AND NOT EXISTS (SELECT 1 FROM clean.customers c WHERE c.customer_id = t.customer_id);
 
-        UPDATE #t SET reject_reason = 'INVALID_DATE', reject_detail = N'Không parse được created_at/resolved_at hoặc resolved_at < created_at'
+        UPDATE #t SET reject_reason = 'INVALID_DATE', reject_detail = N'Cannot parse created_at/resolved_at, or resolved_at < created_at'
         WHERE reject_reason IS NULL
           AND (created_at IS NULL OR (resolved_raw IS NOT NULL AND resolved_at IS NULL) OR resolved_at < created_at);
 
-        UPDATE #t SET reject_reason = 'INVALID_VALUE', reject_detail = N'Danh mục/độ ưu tiên/kênh/trạng thái ngoài danh mục hoặc trạng thái mâu thuẫn với resolved_at'
+        UPDATE #t SET reject_reason = 'INVALID_VALUE', reject_detail = N'Category/priority/channel/status outside the catalogue, or status contradicts resolved_at'
         WHERE reject_reason IS NULL
           AND (category NOT IN (N'Technical', N'Billing', N'Account', N'Service Request')
                OR priority NOT IN (N'High', N'Medium', N'Low')
@@ -53,7 +53,7 @@ BEGIN
                OR (status = N'Closed' AND resolved_at IS NULL)
                OR (status = N'Open' AND resolved_at IS NOT NULL));
 
-        UPDATE t SET reject_reason = 'OUTSIDE_CONTRACT_PERIOD', reject_detail = N'Ticket tạo trước ngày ký hoặc sau ngày rời đi'
+        UPDATE t SET reject_reason = 'OUTSIDE_CONTRACT_PERIOD', reject_detail = N'Ticket created before signup or after exit'
         FROM #t t JOIN clean.contracts k ON k.customer_id = t.customer_id
         WHERE t.reject_reason IS NULL
           AND (CAST(t.created_at AS DATE) < k.start_date OR CAST(t.created_at AS DATE) > k.end_date);
@@ -96,9 +96,9 @@ BEGIN
                               reason_detail NVARCHAR(400), raw_record NVARCHAR(MAX));
 
         /*
-          Nhận diện vai trò cột theo tên tiêu đề, không theo vị trí, vì Finance đặt tên khác nhau
-          giữa các sheet ("Tháng " / "Thang", "Churn Rate mục tiêu (%)" / "Target churn %"...).
-          Cột không nhận diện được sẽ làm cả dòng bị loại, thay vì đoán.
+          Detect each column's role from its header text, not its position, because Finance names columns differently
+          between sheets (Vietnamese headers with and without diacritics, "Thang" / "Target churn %"...).
+          A column that cannot be identified rejects the whole row instead of guessing.
         */
         SELECT c.stg_row_id, c.sheet_name, c.excel_row, c.header_text, c.cell_value, c.cell_type,
                CASE WHEN LOWER(LTRIM(RTRIM(c.header_text))) LIKE N'th%ng%' OR LOWER(c.header_text) LIKE N'%month%' THEN 'month'
@@ -128,8 +128,8 @@ BEGIN
         ALTER TABLE #r ADD target_month DATE, churn_rate DECIMAL(9,6), mrr DECIMAL(14,2),
                            reject_reason VARCHAR(50), reject_detail NVARCHAR(400);
 
-        -- Sheet 2024 lưu tháng là ngày Excel; sheet 2025 lưu chuỗi 'Tmm/yyyy'.
-        -- Churn rate nhập theo đơn vị % (1.39 = 1,39%): tiêu đề có ký hiệu % thì chia 100.
+        -- The 2024 sheet stores the month as an Excel date; the 2025 sheet stores the text 'Tmm/yyyy'.
+        -- Churn rate is typed in percent (1.39 = 1.39%): divide by 100 when the header contains %.
         UPDATE #r SET
             target_month = CASE
                 WHEN month_type = 'datetime' THEN TRY_CONVERT(DATE, LEFT(month_raw, 10), 23)
@@ -142,11 +142,11 @@ BEGIN
 
         UPDATE #r SET target_month = DATEFROMPARTS(YEAR(target_month), MONTH(target_month), 1) WHERE target_month IS NOT NULL;
 
-        UPDATE #r SET reject_reason = 'UNMAPPED_COLUMN', reject_detail = N'Có cột không nhận diện được vai trò'
+        UPDATE #r SET reject_reason = 'UNMAPPED_COLUMN', reject_detail = N'A column could not be mapped to a role'
         WHERE unmapped_cells > 0;
-        UPDATE #r SET reject_reason = 'INVALID_DATE', reject_detail = N'Không đọc được tháng'
+        UPDATE #r SET reject_reason = 'INVALID_DATE', reject_detail = N'Cannot read the month'
         WHERE reject_reason IS NULL AND target_month IS NULL;
-        UPDATE #r SET reject_reason = 'INVALID_VALUE', reject_detail = N'Churn target ngoài (0, 1) hoặc MRR target <= 0'
+        UPDATE #r SET reject_reason = 'INVALID_VALUE', reject_detail = N'Churn target outside (0, 1) or MRR target <= 0'
         WHERE reject_reason IS NULL AND (churn_rate IS NULL OR churn_rate <= 0 OR churn_rate >= 1 OR mrr IS NULL OR mrr <= 0);
 
         WITH ranked AS (
@@ -154,7 +154,7 @@ BEGIN
                    ROW_NUMBER() OVER (PARTITION BY target_month ORDER BY sheet_name DESC, excel_row DESC) AS rn
             FROM #r WHERE reject_reason IS NULL
         )
-        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Tháng xuất hiện nhiều lần' WHERE rn > 1;
+        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Month appears more than once' WHERE rn > 1;
 
         INSERT INTO #reject (stg_row_id, business_key, reason_code, reason_detail, raw_record)
         SELECT stg_row_id, CONCAT(sheet_name, N'!row ', excel_row), reject_reason, reject_detail, raw_record
@@ -203,16 +203,16 @@ BEGIN
         FROM stg.api_fx_rates s;
         SET @read = @@ROWCOUNT;
 
-        UPDATE #f SET reject_reason = 'INVALID_DATE', reject_detail = N'Không đọc được tháng hoặc ngày tỷ giá'
+        UPDATE #f SET reject_reason = 'INVALID_DATE', reject_detail = N'Cannot read the month or the rate date'
         WHERE rate_month_date IS NULL OR rate_date IS NULL;
-        -- Chặn số vô lý (lỗi đơn vị, đảo cặp tiền VND->USD) trước khi nhân vào doanh thu.
-        UPDATE #f SET reject_reason = 'INVALID_VALUE', reject_detail = N'Tỷ giá USD/VND ngoài khoảng hợp lý 10.000 - 50.000'
+        -- Block implausible numbers (unit errors, VND->USD pair flipped) before they multiply into revenue.
+        UPDATE #f SET reject_reason = 'INVALID_VALUE', reject_detail = N'USD/VND rate outside the plausible range 10,000 - 50,000'
         WHERE reject_reason IS NULL AND (usd_vnd IS NULL OR usd_vnd NOT BETWEEN 10000 AND 50000);
         WITH ranked AS (
             SELECT reject_reason, reject_detail, ROW_NUMBER() OVER (PARTITION BY rate_month_date ORDER BY stg_row_id DESC) AS rn
             FROM #f WHERE reject_reason IS NULL
         )
-        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Tháng có nhiều tỷ giá' WHERE rn > 1;
+        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Month has several rates' WHERE rn > 1;
 
         INSERT INTO #reject (stg_row_id, business_key, reason_code, reason_detail)
         SELECT stg_row_id, rate_month, reject_reason, reject_detail FROM #f WHERE reject_reason IS NOT NULL;

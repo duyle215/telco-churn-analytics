@@ -1,27 +1,27 @@
-"""GIAI ĐOẠN 3: deploy và chạy ETL stg -> clean -> mart + kiểm tra chất lượng dữ liệu.
+"""STAGE 3: deploy and run the ETL stg -> clean -> mart + data quality checks.
 
-Chạy:
-  python -m src.run_etl --rebuild   # tạo lại bảng clean/mart rồi chạy (lần đầu, hoặc khi đổi DDL)
-  python -m src.run_etl             # chỉ chạy lại stored procedure (idempotent)
+Run:
+  python -m src.run_etl --rebuild   # recreate clean/mart tables, then run (first time, or after a DDL change)
+  python -m src.run_etl             # only re-run the stored procedures (idempotent)
 
-Toàn bộ logic nằm trong stored procedure; script này chỉ deploy file SQL, đồng bộ tham số
-từ src/config.py vào dbo.etl_config và gọi dbo.usp_run_etl.
+All logic lives in stored procedures; this script only deploys the SQL files, syncs parameters
+from src/config.py into dbo.etl_config and calls dbo.usp_run_etl.
 """
 import argparse
 
 from src import config, db
 
 DDL_REBUILD_FILES = ["03_clean_tables.sql", "04_mart_tables.sql"]
-# Thứ tự deploy: hàm tiện ích trước (view cần), rồi view (proc nạp snapshot đọc cột của view lúc biên dịch),
-# cuối cùng là các proc ETL và data quality.
+# Deploy order: helper functions first (views need them), then views (the snapshot proc reads view columns when it
+# compiles), and finally the ETL and data quality procs.
 CODE_ORDER = ["etl/00_helpers.sql", "views/*.sql", "etl/[1-9]*.sql", "quality/*.sql", "serving/*.sql"]
 
 
 def sync_config(conn) -> None:
     values = [
-        ("snapshot_date", config.SNAPSHOT_DATE.strftime("%Y-%m-%d"), "Ngày chụp dữ liệu; khách chưa rời đi được tính tới tháng này"),
+        ("snapshot_date", config.SNAPSHOT_DATE.strftime("%Y-%m-%d"), "Snapshot date; active customers are counted up to this month"),
         ("analysis_window_start", config.CHURN_WINDOW_START.start_time.strftime("%Y-%m-%d"),
-         "Đầu cửa sổ phân tích churn; trước mốc này không có dữ liệu khách rời đi"),
+         "Start of the churn analysis window; there is no churn data before it"),
     ]
     cur = conn.cursor()
     for key, value, desc in values:
@@ -47,8 +47,8 @@ def deploy(rebuild: bool) -> None:
 
 
 def run() -> str:
-    # autocommit bắt buộc: các proc tự quản lý transaction; nếu pyodbc bọc thêm một transaction
-    # ngoài cùng thì lỗi ở bước cuối sẽ rollback cả các dòng etl_log của những bước trước.
+    # autocommit is required: the procs manage their own transactions; if pyodbc wrapped an outer
+    # transaction, a failure in the last step would roll back the etl_log rows of the earlier steps.
     with db.connect(config.DW_DB, autocommit=True) as conn:
         cur = conn.cursor()
         cur.execute("EXEC dbo.usp_run_etl")
@@ -76,7 +76,7 @@ def print_report(batch_id: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rebuild", action="store_true", help="Tạo lại bảng clean/mart trước khi chạy")
+    parser.add_argument("--rebuild", action="store_true", help="Recreate clean/mart tables before running")
     args = parser.parse_args()
     run_all(args.rebuild)
 

@@ -1,8 +1,8 @@
-"""Tách bảng phẳng gốc thành 3 bảng CRM chuẩn hoá: customers, contracts, services.
+"""Split the flat source table into 3 normalised CRM tables: customers, contracts, services.
 
-- customers: thông tin nhân khẩu học (đổi rất ít).
-- contracts: điều khoản hợp đồng và trạng thái vòng đời (ngày bắt đầu/kết thúc, churn).
-- services: hồ sơ dịch vụ đang dùng. Giả định không đổi trong suốt vòng đời khách.
+- customers: demographics (rarely change).
+- contracts: contract terms and lifecycle status (start/end dates, churn).
+- services: services in use. Assumed constant over the customer's lifetime.
 """
 import numpy as np
 import pandas as pd

@@ -1,8 +1,8 @@
-"""Gọi các stored procedure của trang Khám phá (sql/serving/explore_procs.sql).
+"""Calls the stored procedures behind the Explore page (sql/serving/explore_procs.sql).
 
-Toàn bộ logic lọc và tính toán nằm trong SQL. Python chỉ:
-- kiểm tra bộ lọc chỉ chứa yếu tố/giá trị có thật (trả lỗi 400 rõ ràng thay vì âm thầm bỏ qua),
-- đổi bộ lọc sang JSON làm tham số, gọi proc một lần và đọc mọi result set (1 round-trip, không N+1).
+All filtering and calculation logic lives in SQL. Python only:
+- checks that filters only contain real factors/values (clear 400 error instead of silently ignoring them),
+- turns the filters into a JSON parameter, calls the proc once and reads every result set (1 round trip, no N+1).
 """
 import json
 
@@ -25,19 +25,19 @@ def factor_catalog() -> list[dict]:
 
 
 def validate_filters(raw, catalog: list[dict]) -> dict[str, list[str]]:
-    """Sắp xếp ổn định để cùng một bộ lọc luôn ra cùng một khoá cache."""
+    """Stable ordering so the same filters always produce the same cache key."""
     if not isinstance(raw, dict):
-        raise FilterError("filters phải là object {yếu_tố: [giá_trị, ...]}")
+        raise FilterError("filters must be an object {factor: [value, ...]}")
     allowed = {c["key"]: {v["value"] for v in c["values"]} for c in catalog}
     clean = {}
     for key, values in raw.items():
         if key not in allowed:
-            raise FilterError(f"Yếu tố không hợp lệ: {key}")
+            raise FilterError(f"Invalid factor: {key}")
         if not isinstance(values, list) or not values:
             continue
         bad = [v for v in values if str(v) not in allowed[key]]
         if bad:
-            raise FilterError(f"Giá trị không hợp lệ cho {key}: {bad}")
+            raise FilterError(f"Invalid value for {key}: {bad}")
         clean[key] = sorted({str(v) for v in values})
     return dict(sorted(clean.items()))
 
@@ -61,25 +61,25 @@ PAGE_SIZE_MAX = 200
 
 
 def validate_list_params(body: dict) -> dict:
-    """Tham số danh sách khách: chỉ nhận giá trị trong danh sách cho phép (proc dùng chúng trong CASE, không SQL động)."""
+    """Customer list parameters: only values from the allow-lists (the proc uses them in CASE, no dynamic SQL)."""
     quick = sorted({str(q) for q in body.get("quick", [])})
     if not set(quick) <= QUICK_FILTERS:
-        raise FilterError(f"Bộ lọc nhanh không hợp lệ: {sorted(set(quick) - QUICK_FILTERS)}")
+        raise FilterError(f"Invalid quick filter: {sorted(set(quick) - QUICK_FILTERS)}")
     sort_key = body.get("sort", "current_mrr_usd")
     if sort_key not in SORT_KEYS:
-        raise FilterError(f"Không sắp xếp được theo cột: {sort_key}")
+        raise FilterError(f"Cannot sort by column: {sort_key}")
     try:
         page, page_size = int(body.get("page", 0)), int(body.get("page_size", 50))
     except (TypeError, ValueError) as exc:
-        raise FilterError("page/page_size phải là số") from exc
+        raise FilterError("page/page_size must be numbers") from exc
     if page < 0 or not 0 < page_size <= PAGE_SIZE_MAX:
-        raise FilterError(f"page >= 0 và 0 < page_size <= {PAGE_SIZE_MAX}")
+        raise FilterError(f"page >= 0 and 0 < page_size <= {PAGE_SIZE_MAX}")
     return {"quick": quick, "search": str(body.get("search", ""))[:50], "sort": sort_key,
             "desc": bool(body.get("desc", True)), "page": page, "page_size": page_size}
 
 
 def customers(filters: dict[str, list[str]], params: dict, export: bool = False) -> dict:
-    """Một trang danh sách (hoặc toàn bộ dòng khớp khi export) + tổng số, tính hoàn toàn ở SQL Server."""
+    """One page of the list (or every matching row when exporting) + totals, computed entirely in SQL Server."""
     meta, rows = _call(
         "EXEC mart.usp_explore_customers @filters = ?, @quick = ?, @search = ?, @sort_key = ?, "
         "@sort_desc = ?, @page = ?, @page_size = ?",

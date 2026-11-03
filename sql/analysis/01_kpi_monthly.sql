@@ -1,19 +1,21 @@
 /*
-  Câu hỏi 1: KPI theo tháng (số khách, churn rate, MRR, MRR mất do churn, ARPU) so với chỉ tiêu.
-  Nguồn: mart.v_kpi_monthly (định nghĩa chỉ số ở đầu sql/views/mart_views.sql).
+  Question 1: Monthly KPIs (customers, churn rate, MRR, MRR lost to churn, ARPU) against target.
+  Source: mart.v_kpi_monthly (metric definitions at the top of sql/views/mart_views.sql).
 
-  Insight (batch ETL gần nhất, cửa sổ 2024-01..2025-12):
-  - Số khách có tính cước tăng 4.284 -> 5.240 (+22%), MRR tăng 283.226 -> 322.470 USD (+13,9%).
-  - Churn rate bình quân 1,66%/tháng nhưng vượt chỉ tiêu ở 9/12 tháng năm 2024 (chỉ tiêu 1,39%)
-    và 10/12 tháng năm 2025 (chỉ tiêu 1,28%): chỉ tiêu churn không đạt một cách có hệ thống.
-  - 2025-03 MRR tăng +8,0% so với tháng trước (tăng giá Fiber 15%), kéo MRR vượt chỉ tiêu +6,6%.
-    Nhưng ngay sau đó MRR mất do churn lên đỉnh 12.018 USD ở 2025-04 (gấp ~2,4 lần mức thường ~5.000)
-    và MRR giảm 4 tháng liên tiếp (2025-04..07): phần lợi từ tăng giá bị churn ăn lại một phần.
-  - MRR chỉ hụt chỉ tiêu ở 2024-11..2025-02 (-0,06% đến -0,84%), các tháng khác đều vượt.
-  - ARPU giảm dần 66,11 -> 61,54 USD (trừ bước nhảy khi tăng giá); cần tách theo tenure/gói cước
-    để biết nguyên nhân trước khi kết luận.
-  - Lưu ý: 2025-12 có 248 khách mới (gấp đôi bình thường) là đặc điểm của dữ liệu gốc (nhiều khách tenure = 1),
-    không nên đọc là tăng trưởng đột biến. MRR tháng 2024-08 là số ước lượng (sự cố billing).
+  Insight (latest ETL batch, window 2024-01..2025-12):
+  - Billed customers grew 4,284 -> 5,240 (+22%), MRR grew 283,226 -> 322,470 USD (+13.9%).
+  - Average churn 1.66%/month, above target in 9/12 months of 2024 (target 1.39%)
+    and 10/12 months of 2025 (target 1.28%). Note: the targets were simulated at 90% of actual 2024 churn
+    (src/generate/targets.py), so missing them is expected here; the query shows how target tracking works.
+  - 2025-03 MRR +8.0% month over month (15% Fiber price increase), putting MRR 6.6% above target.
+    MRR lost to churn then peaked at 12,018 USD in 2025-04 (~2.4x the usual ~5,000) and MRR fell four months
+    in a row (2025-04..07). The simulation only moves WHEN Fiber churners leave, not how many, so this data
+    cannot measure how much extra churn the price increase caused; that needs a control group.
+  - MRR missed target only in 2024-11..2025-02 (-0.06% to -0.84%); all other months were above.
+  - ARPU drifted down 66.11 -> 61.54 USD (apart from the price-increase jump); split by tenure/plan
+    before drawing a conclusion.
+  - Note: 2025-12 has 248 new customers (twice the usual) because the source data has many tenure = 1 customers;
+    do not read it as a growth spike. MRR for 2024-08 is estimated (billing outage).
 */
 SELECT year_month, customers, new_customers, churners,
        churn_rate, churn_rate_target, churn_vs_target,
@@ -23,7 +25,7 @@ FROM mart.v_kpi_monthly
 WHERE is_analysis_window = 1
 ORDER BY date_key;
 
--- Tổng hợp theo năm: số tháng không đạt chỉ tiêu.
+-- Yearly roll-up: months that missed target.
 SELECT [year],
        AVG(churn_rate) AS avg_churn_rate,
        MAX(churn_rate_target) AS churn_target,

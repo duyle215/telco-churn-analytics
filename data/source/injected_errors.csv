@@ -1,29 +1,29 @@
 ﻿error_id,source_system,object,column,error_type,rows_affected,description
-1,crm,src_crm.dbo.contracts,total_charges,blank_value_inherited,11,Có sẵn trong dữ liệu gốc: TotalCharges rỗng ở khách tenure = 0
-2,crm,src_crm.dbo.customers,senior_citizen,inconsistent_boolean_inherited,7043,Có sẵn trong dữ liệu gốc: senior_citizen dùng 0/1 trong khi các cột cờ khác dùng Yes/No
-3,crm,src_crm.dbo.customers,customer_id,duplicate_key_exact,20,Bản ghi trùng y hệt (nhập 2 lần)
-4,crm,src_crm.dbo.customers,customer_id,duplicate_key_conflicting,25,"Bản ghi trùng nhưng khác giá trị dependents, updated_at mới hơn; 10 dòng trong số này có khoảng trắng cuối customer_id"
-5,crm,src_crm.dbo.customers,partner,inconsistent_boolean,425,Giá trị Yes/No ghi lẫn Y/yes/1/YES và N/no/0/NO
-6,crm,src_crm.dbo.customers,dependents,inconsistent_boolean,425,Giá trị Yes/No ghi lẫn Y/yes/1/YES và N/no/0/NO
-7,crm,src_crm.dbo.customers,gender,extra_whitespace,80,Khoảng trắng thừa đầu/cuối giá trị
-8,crm,src_crm.dbo.contracts,paperless_billing,inconsistent_boolean,352,Giá trị Yes/No ghi lẫn Y/yes/1/YES và N/no/0/NO
-9,crm,src_crm.dbo.contracts,churn_flag,inconsistent_boolean,281,Giá trị Yes/No ghi lẫn Y/yes/1/YES và N/no/0/NO
-10,crm,src_crm.dbo.contracts,contract_type,extra_whitespace,120,Khoảng trắng thừa đầu/cuối giá trị
-11,crm,src_crm.dbo.contracts,payment_method,extra_whitespace,150,Khoảng trắng thừa đầu/cuối giá trị
-12,crm,src_crm.dbo.contracts,start_date,mixed_date_format,2133,"Ngày lưu dạng chuỗi nhiều định dạng ('%Y-%m-%d': 4910, '%d/%m/%Y': 1056, '%Y%m%d': 723, '%d-%b-%Y': 354); số dòng tính là các dòng khác '%Y-%m-%d'"
-13,crm,src_crm.dbo.contracts,end_date,mixed_date_format,535,"Ngày lưu dạng chuỗi nhiều định dạng ('%Y-%m-%d': 1334, '%d/%m/%Y': 269, '%Y%m%d': 178, '%d-%b-%Y': 88); số dòng tính là các dòng khác '%Y-%m-%d'"
-14,crm,src_crm.dbo.services,phone_service,inconsistent_boolean,211,Giá trị Yes/No ghi lẫn Y/yes/1/YES và N/no/0/NO
-15,crm,src_crm.dbo.services,customer_id,extra_whitespace,60,Khoảng trắng thừa đầu/cuối giá trị
-16,billing,src_billing.dbo.invoices,billing_month,missing_period,4573,Sự cố hệ thống billing: toàn bộ hoá đơn tháng 2024-08 không được sinh
-17,billing,src_billing.dbo.payments,invoice_id,missing_period,4552,Thanh toán tương ứng với hoá đơn tháng 2024-08 cũng không có
-18,billing,src_billing.dbo.invoices,customer_id,orphan_key,53,"Hoá đơn của 8 customer_id không tồn tại trong CRM: 6529-GPYNQ, 5317-VGYSH, 5198-VLNSA, 1185-LTNIO, 5509-SOLQS, 2700-MOQCL, 2801-PROVD, 2559-HWCJZ"
-19,billing,src_billing.dbo.payments,customer_id,orphan_key,53,Thanh toán của các hoá đơn mồ côi ở trên
-20,billing,src_billing.dbo.invoices,amount_usd,negative_amount,120,Amount bị đảo dấu âm do nhập nhầm
-21,billing,src_billing.dbo.invoices,amount_usd,null_amount,150,Amount NULL do lỗi tích hợp; payments vẫn có số tiền đúng
-22,billing,src_billing.dbo.invoices,customer_id,extra_whitespace,400,Khoảng trắng thừa đầu/cuối giá trị
-23,ticket_csv,support_tickets.csv,customer_id,extra_whitespace,90,Khoảng trắng thừa đầu/cuối giá trị
-24,ticket_csv,support_tickets.csv,created_at,mixed_date_format,2344,"Ngày lưu dạng chuỗi nhiều định dạng ('%Y-%m-%d %H:%M:%S': 8345, '%d/%m/%Y %H:%M': 1626, '%d-%b-%Y %I:%M %p': 718); số dòng tính là các dòng khác '%Y-%m-%d %H:%M:%S'"
-25,ticket_csv,support_tickets.csv,resolved_at,mixed_date_format,2288,"Ngày lưu dạng chuỗi nhiều định dạng ('%Y-%m-%d %H:%M:%S': 8396, '%d/%m/%Y %H:%M': 1549, '%d-%b-%Y %I:%M %p': 739); số dòng tính là các dòng khác '%Y-%m-%d %H:%M:%S'"
-26,finance_excel,targets.xlsx,(header),non_standard_header,2,"Mỗi sheet có 3 dòng tiêu đề/ghi chú phía trên, header thật nằm ở dòng 4; tên cột có dấu, khoảng trắng thừa, đơn vị trong tên và khác nhau giữa sheet 2024/2025"
-27,finance_excel,targets.xlsx,Tháng / Thang,mixed_date_format,12,Sheet 2024 ghi tháng dạng ngày Excel; sheet 2025 ghi dạng chuỗi 'Tmm/yyyy' (12 dòng)
-28,finance_excel,targets.xlsx,Churn Rate mục tiêu (%),unit_inconsistency,24,"Churn rate nhập theo đơn vị phần trăm (1.2 nghĩa là 1.2%), không phải tỷ lệ 0.012"
+1,crm,src_crm.dbo.contracts,total_charges,blank_value_inherited,11,Present in the original data: blank TotalCharges for tenure = 0 customers
+2,crm,src_crm.dbo.customers,senior_citizen,inconsistent_boolean_inherited,7043,Present in the original data: senior_citizen uses 0/1 while the other flags use Yes/No
+3,crm,src_crm.dbo.customers,customer_id,duplicate_key_exact,20,Exact duplicate record (entered twice)
+4,crm,src_crm.dbo.customers,customer_id,duplicate_key_conflicting,25,Duplicate record with a different dependents value and newer updated_at; 10 of these rows have trailing whitespace in customer_id
+5,crm,src_crm.dbo.customers,partner,inconsistent_boolean,425,Yes/No values mixed with Y/yes/1/YES and N/no/0/NO
+6,crm,src_crm.dbo.customers,dependents,inconsistent_boolean,425,Yes/No values mixed with Y/yes/1/YES and N/no/0/NO
+7,crm,src_crm.dbo.customers,gender,extra_whitespace,80,Leading/trailing whitespace in the value
+8,crm,src_crm.dbo.contracts,paperless_billing,inconsistent_boolean,352,Yes/No values mixed with Y/yes/1/YES and N/no/0/NO
+9,crm,src_crm.dbo.contracts,churn_flag,inconsistent_boolean,281,Yes/No values mixed with Y/yes/1/YES and N/no/0/NO
+10,crm,src_crm.dbo.contracts,contract_type,extra_whitespace,120,Leading/trailing whitespace in the value
+11,crm,src_crm.dbo.contracts,payment_method,extra_whitespace,150,Leading/trailing whitespace in the value
+12,crm,src_crm.dbo.contracts,start_date,mixed_date_format,2133,"Dates stored as strings in several formats ('%Y-%m-%d': 4910, '%d/%m/%Y': 1056, '%Y%m%d': 723, '%d-%b-%Y': 354); counted rows are those not in '%Y-%m-%d'"
+13,crm,src_crm.dbo.contracts,end_date,mixed_date_format,535,"Dates stored as strings in several formats ('%Y-%m-%d': 1334, '%d/%m/%Y': 269, '%Y%m%d': 178, '%d-%b-%Y': 88); counted rows are those not in '%Y-%m-%d'"
+14,crm,src_crm.dbo.services,phone_service,inconsistent_boolean,211,Yes/No values mixed with Y/yes/1/YES and N/no/0/NO
+15,crm,src_crm.dbo.services,customer_id,extra_whitespace,60,Leading/trailing whitespace in the value
+16,billing,src_billing.dbo.invoices,billing_month,missing_period,4573,Billing system outage: no invoices generated for 2024-08
+17,billing,src_billing.dbo.payments,invoice_id,missing_period,4552,Payments for the 2024-08 invoices are missing too
+18,billing,src_billing.dbo.invoices,customer_id,orphan_key,53,"Invoices for 8 customer_id not found in CRM: 6529-GPYNQ, 5317-VGYSH, 5198-VLNSA, 1185-LTNIO, 5509-SOLQS, 2700-MOQCL, 2801-PROVD, 2559-HWCJZ"
+19,billing,src_billing.dbo.payments,customer_id,orphan_key,53,Payments of the orphan invoices above
+20,billing,src_billing.dbo.invoices,amount_usd,negative_amount,120,Amount sign flipped to negative by an entry error
+21,billing,src_billing.dbo.invoices,amount_usd,null_amount,150,NULL amount from an integration error; payments still hold the correct amount
+22,billing,src_billing.dbo.invoices,customer_id,extra_whitespace,400,Leading/trailing whitespace in the value
+23,ticket_csv,support_tickets.csv,customer_id,extra_whitespace,90,Leading/trailing whitespace in the value
+24,ticket_csv,support_tickets.csv,created_at,mixed_date_format,2344,"Dates stored as strings in several formats ('%Y-%m-%d %H:%M:%S': 8345, '%d/%m/%Y %H:%M': 1626, '%d-%b-%Y %I:%M %p': 718); counted rows are those not in '%Y-%m-%d %H:%M:%S'"
+25,ticket_csv,support_tickets.csv,resolved_at,mixed_date_format,2288,"Dates stored as strings in several formats ('%Y-%m-%d %H:%M:%S': 8396, '%d/%m/%Y %H:%M': 1549, '%d-%b-%Y %I:%M %p': 739); counted rows are those not in '%Y-%m-%d %H:%M:%S'"
+26,finance_excel,targets.xlsx,(header),non_standard_header,2,"Each sheet has 3 title/note rows above the real header on row 4; column names have diacritics, extra spaces, units in the name, and differ between the 2024/2025 sheets"
+27,finance_excel,targets.xlsx,Tháng / Thang,mixed_date_format,12,The 2024 sheet stores the month as an Excel date; the 2025 sheet as the text 'Tmm/yyyy' (12 rows)
+28,finance_excel,targets.xlsx,Churn Rate mục tiêu (%),unit_inconsistency,24,"Churn rate typed in percent (1.2 means 1.2%), not as the ratio 0.012"

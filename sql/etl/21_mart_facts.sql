@@ -1,6 +1,6 @@
 /*
-  clean -> mart: các bảng fact. Nạp lại toàn bộ trong 1 transaction (TRUNCATE + INSERT).
-  Mỗi proc so số dòng kỳ vọng với số dòng đã ghi; lệch là THROW, không để mất dòng âm thầm.
+  clean -> mart: fact tables. Fully reloaded in one transaction (TRUNCATE + INSERT).
+  Each procedure compares expected and written row counts; a mismatch THROWs instead of silently losing rows.
 */
 
 CREATE OR ALTER PROCEDURE mart.usp_load_fact_billing @batch_id UNIQUEIDENTIFIER
@@ -11,12 +11,12 @@ BEGIN
     EXEC dbo.usp_etl_log_start @batch_id, 'mart', N'mart.usp_load_fact_billing', N'mart.fact_billing', NULL, @log_id OUTPUT;
     BEGIN TRY
         /*
-          Grain lấy từ CRM (mọi tháng khách có tính cước theo hợp đồng), không lấy từ bảng hoá đơn.
-          Lý do: tháng billing gặp sự cố không có hoá đơn, nếu lấy theo hoá đơn thì khách "biến mất"
-          một tháng và churn rate, số khách, MRR của tháng đó đều sai.
+          Grain comes from CRM (every month the contract is billed), not from the invoice table.
+          Reason: the billing outage month has no invoices; taking the grain from invoices would make customers "vanish"
+          for a month and break that month's churn rate, customer count and MRR.
         */
-        -- Sinh tháng bằng bảng số đếm rồi join dim_date theo phép bằng: join theo khoảng (BETWEEN) với dim_date
-        -- bị SQL Server chạy thành nested loop, đọc ~14 triệu trang và mất ~37 giây.
+        -- Generate months from a numbers table, then join dim_date on equality: a range join (BETWEEN) on dim_date
+        -- ran as a nested loop in SQL Server, reading ~14 million pages and taking ~37 seconds.
         WITH n AS (
             SELECT TOP (1000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) - 1 AS i FROM sys.all_objects
         )
@@ -38,8 +38,8 @@ BEGIN
         LEFT JOIN (SELECT invoice_id, SUM(amount_usd) AS paid_amount, MAX(payment_date) AS last_payment_date
                    FROM clean.payments GROUP BY invoice_id) p ON p.invoice_id = i.invoice_id;
 
-        -- Tháng thiếu hoá đơn: ước lượng bằng trung bình hoá đơn liền trước và liền sau của chính khách đó
-        -- (mức cước khách thường ổn định), thiếu một phía thì dùng phía còn lại, không có cả hai thì dùng giá gói.
+        -- Month without an invoice: estimate as the mean of the customer's previous and next invoice
+        -- (customer charges are usually stable); use whichever side exists, or the plan price if neither does.
         UPDATE f
         SET amount_usd = CASE WHEN prev.amount_usd IS NOT NULL AND nxt.amount_usd IS NOT NULL
                                   THEN ROUND((prev.amount_usd + nxt.amount_usd) / 2, 2)
@@ -54,7 +54,7 @@ BEGIN
                      ORDER BY x.billing_month ASC) nxt
         WHERE f.invoice_id IS NULL;
 
-        -- Tra surrogate key một lần cho mỗi khách (7 nghìn dòng) thay vì join 9 cột dịch vụ trên từng khách-tháng.
+        -- Look up surrogate keys once per customer (7 thousand rows) instead of joining 9 service columns on every customer-month.
         SELECT k.customer_id, dc.customer_key, ct.contract_key, ds.service_key, pm.payment_method_key
         INTO #keys
         FROM clean.contracts k
@@ -91,7 +91,7 @@ BEGIN
             JOIN clean.fx_rates fx ON fx.rate_month = f.billing_month;
             SET @written = @@ROWCOUNT;
             IF @written <> @expected
-                THROW 50010, N'fact_billing: số dòng ghi khác số khách-tháng kỳ vọng (thiếu dimension hoặc tỷ giá)', 1;
+                THROW 50010, N'fact_billing: rows written differ from expected customer-months (missing dimension or FX rate)', 1;
         COMMIT;
 
         SET @msg = CONCAT(N'customer-months ', @expected, N'; imputed ',
@@ -143,7 +143,7 @@ BEGIN
                                     AND ds.streaming_movies = sv.streaming_movies;
             SET @written = @@ROWCOUNT;
             IF @written <> @expected
-                THROW 50011, N'fact_tickets: số dòng ghi khác số ticket trong clean', 1;
+                THROW 50011, N'fact_tickets: rows written differ from tickets in clean', 1;
         COMMIT;
         EXEC dbo.usp_etl_log_end @log_id, 'SUCCESS', @expected, @written, NULL;
     END TRY
@@ -170,7 +170,7 @@ BEGIN
             SELECT d.date_key, t.churn_rate_target, t.mrr_target_usd, t.note
             FROM clean.targets t JOIN mart.dim_date d ON d.[date] = t.target_month;
             SET @written = @@ROWCOUNT;
-            IF @written <> @expected THROW 50012, N'fact_target: tháng chỉ tiêu nằm ngoài dim_date', 1;
+            IF @written <> @expected THROW 50012, N'fact_target: target month outside dim_date', 1;
         COMMIT;
         EXEC dbo.usp_etl_log_end @log_id, 'SUCCESS', @expected, @written, NULL;
     END TRY
@@ -183,7 +183,7 @@ BEGIN
 END
 GO
 
-/* Vật lý hoá mart.v_customer_profile cho trang Khám phá; phải chạy sau khi các fact đã nạp xong. */
+/* Materialise mart.v_customer_profile for the Explore page; must run after the facts are loaded. */
 CREATE OR ALTER PROCEDURE mart.usp_load_customer_snapshot @batch_id UNIQUEIDENTIFIER
 AS
 BEGIN
@@ -210,17 +210,17 @@ BEGIN
                 late_payment_rate, tickets, billing_tickets, technical_tickets, in_analysis_window
             FROM mart.v_customer_profile;
             SET @written = @@ROWCOUNT;
-            IF @written <> @expected THROW 50013, N'customer_snapshot: số khách khác số khách có trong fact_billing', 1;
+            IF @written <> @expected THROW 50013, N'customer_snapshot: customer count differs from fact_billing', 1;
 
-            -- Danh mục yếu tố: thêm/bớt yếu tố cho trang Khám phá chỉ cần sửa hai danh sách VALUES dưới đây.
+            -- Factor catalogue: adding or removing an Explore factor only needs the two VALUES lists below.
             MERGE mart.dim_factor AS t
             USING (VALUES
-                ('contract', N'Loại hợp đồng', 1), ('tenure', N'Thời gian gắn bó', 2), ('internet', N'Loại internet', 3),
-                ('addons', N'Số dịch vụ đi kèm', 4), ('tech_support', N'Hỗ trợ kỹ thuật', 5),
-                ('online_security', N'Bảo mật online', 6), ('payment_type', N'Hình thức thanh toán', 7),
-                ('payment_method', N'Phương thức thanh toán', 8), ('paperless', N'Hoá đơn điện tử', 9),
-                ('senior', N'Người cao tuổi', 10), ('partner', N'Có vợ/chồng', 11),
-                ('dependents', N'Có người phụ thuộc', 12), ('gender', N'Giới tính', 13)
+                ('contract', N'Contract type', 1), ('tenure', N'Tenure', 2), ('internet', N'Internet service', 3),
+                ('addons', N'Add-on services', 4), ('tech_support', N'Tech support', 5),
+                ('online_security', N'Online security', 6), ('payment_type', N'Payment type', 7),
+                ('payment_method', N'Payment method', 8), ('paperless', N'Paperless billing', 9),
+                ('senior', N'Senior citizen', 10), ('partner', N'Has partner', 11),
+                ('dependents', N'Has dependents', 12), ('gender', N'Gender', 13)
             ) AS s(factor_key, factor_label, factor_sort) ON t.factor_key = s.factor_key
             WHEN MATCHED THEN UPDATE SET factor_label = s.factor_label, factor_sort = s.factor_sort
             WHEN NOT MATCHED BY TARGET THEN INSERT (factor_key, factor_label, factor_sort) VALUES (s.factor_key, s.factor_label, s.factor_sort)
@@ -233,8 +233,8 @@ BEGIN
                 ('contract', s.contract_type, s.contract_sort),
                 ('tenure', s.tenure_group, s.tenure_group_order),
                 ('internet', s.internet_service, CASE s.internet_service WHEN N'Fiber optic' THEN 1 WHEN N'DSL' THEN 2 ELSE 3 END),
-                -- Khách không dùng internet không thể có dịch vụ đi kèm; gộp họ vào "0 dịch vụ" sẽ kéo
-                -- tỷ lệ rời đi của nhóm này xuống sai lệch, nên tách thành lựa chọn riêng.
+                -- Customers without internet cannot have add-ons; lumping them into "0 add-ons" would pull
+                -- that group's churn rate down misleadingly, so they get their own option.
                 ('addons', CASE WHEN s.internet_service = N'No' THEN N'No internet service' ELSE CAST(s.addon_count AS NVARCHAR(60)) END,
                            CASE WHEN s.internet_service = N'No' THEN 99 ELSE s.addon_count END),
                 ('tech_support', s.tech_support, CASE s.tech_support WHEN N'No' THEN 1 WHEN N'Yes' THEN 2 ELSE 3 END),

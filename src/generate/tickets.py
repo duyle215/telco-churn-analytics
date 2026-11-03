@@ -1,8 +1,8 @@
-"""Sinh ticket hỗ trợ khách hàng, mô phỏng file export từ hệ thống ticket.
+"""Generate customer support tickets, simulating an export file from the ticket system.
 
-Số ticket được sinh theo Poisson cho từng khách x tháng, với cường độ tăng khi khách
-không có TechSupport, dùng Fiber, sắp rời đi, và khi có sự kiện tăng giá Fiber
-(khiếu nại hoá đơn). Đây là các tương quan mà phần phân tích phải tìm lại được.
+Ticket counts follow a Poisson draw per customer x month, with higher intensity when the customer
+has no TechSupport, uses Fiber, is about to leave, and during the Fiber price increase
+(billing complaints). The analysis should recover these patterns; because they are simulated, they are not findings.
 """
 import numpy as np
 import pandas as pd
@@ -16,7 +16,7 @@ NO_TECH_SUPPORT_MULTIPLIER = 2.2
 CHURNER_MULTIPLIER = 1.5
 PRE_CHURN_MULTIPLIER = 3.0
 PRE_CHURN_WINDOW_MONTHS = 3
-# Cường độ khiếu nại hoá đơn thêm vào cho khách Fiber sau khi tăng giá.
+# Extra billing-complaint intensity for every Fiber customer after the price increase, independent of who churns.
 FIBER_EVENT_BILLING_TICKETS = {
     pd.Period("2025-03", "M"): 0.10,
     pd.Period("2025-04", "M"): 0.08,
@@ -81,7 +81,7 @@ def build_tickets(timeline: pd.DataFrame, rng: np.random.Generator) -> pd.DataFr
     month_start = t["month"].dt.start_time
     seconds_in_month = t["month"].dt.days_in_month.to_numpy() * 86400
     created = month_start + pd.to_timedelta((rng.random(len(t)) * seconds_in_month).astype(int), unit="s")
-    # Ticket không thể trước ngày ký hay sau ngày rời đi / ngày snapshot.
+    # A ticket cannot be created before signup or after the exit / snapshot date.
     upper = t["end_date"].fillna(config.SNAPSHOT_DATE) + pd.Timedelta(hours=23, minutes=59)
     created = created.clip(lower=t["signup_date"], upper=upper)
     t["created_at"] = created.dt.floor("s")

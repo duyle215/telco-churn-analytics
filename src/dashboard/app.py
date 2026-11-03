@@ -1,9 +1,9 @@
-"""Dashboard phân tích churn (thay cho Power BI): Flask phục vụ API JSON đọc từ TelcoDW.mart.
+"""Churn analytics dashboard (instead of Power BI): Flask serves a JSON API that reads TelcoDW.mart.
 
-Chạy:  python -m src.dashboard.app   rồi mở http://127.0.0.1:5000
+Run:  python -m src.dashboard.app   then open http://127.0.0.1:5000
 
-Tầng này không tự tính chỉ số; mọi phép tính nằm trong SQL (view mart, src/dashboard/explore.py).
-Mô phỏng what-if ở frontend dùng đúng công thức của sql/analysis/07_whatif_contract.sql.
+This layer computes no metrics; every calculation lives in SQL (mart views, src/dashboard/explore.py).
+The what-if simulation in the frontend uses the same formula as sql/analysis/07_whatif_contract.sql.
 """
 import csv
 import io
@@ -36,10 +36,10 @@ app = Flask(__name__)
 
 
 class BatchCache:
-    """Cache theo batch ETL: dữ liệu chỉ đổi khi ETL chạy lại, nên batch mới thì bỏ toàn bộ cache cũ.
+    """Cache per ETL batch: data only changes when the ETL runs again, so a new batch clears the whole cache.
 
-    batch_id được kiểm tra lại tối đa mỗi BATCH_CHECK_SECONDS giây, để request thường không tốn thêm
-    một round-trip chỉ để hỏi "đã có batch mới chưa".
+    batch_id is re-checked at most every BATCH_CHECK_SECONDS seconds, so ordinary requests do not pay an extra
+    round trip just to ask "is there a new batch yet".
     """
 
     def __init__(self):
@@ -108,6 +108,7 @@ def meta():
     return jsonify({
         "snapshot_date": config.SNAPSHOT_DATE.strftime("%Y-%m-%d"),
         "analysis_window": [str(config.CHURN_WINDOW_START), str(config.SNAPSHOT_MONTH)],
+        "price_event_month": str(config.FIBER_PRICE_EVENT_MONTH),
         "last_etl": rows[0] if rows else None,
     })
 
@@ -126,30 +127,30 @@ def explore_data():
 
 @app.post("/api/explore/customers")
 def explore_customers():
-    """Một trang danh sách khách: lọc / tìm / sắp xếp / chia trang đều chạy trong SQL, trả về đúng 1 trang."""
+    """One page of the customer list: filtering / search / sorting / paging all run in SQL, exactly 1 page is returned."""
     filters, params = _request_filters(), _list_params()
     key = ("customers", json.dumps(filters, sort_keys=True), json.dumps(params, sort_keys=True))
     return jsonify(cache.get(key, lambda: explore.customers(filters, params)))
 
 
-CSV_COLUMNS = [("customer_id", "Mã khách"), ("contract_type", "Hợp đồng"), ("internet_service", "Internet"),
-               ("tenure_months", "Gắn bó (tháng)"), ("current_mrr_usd", "Cước/tháng (USD)"),
-               ("billing_tickets", "Khiếu nại hoá đơn"), ("tickets", "Ticket"), ("late_payment_rate", "Tỷ lệ trả trễ"),
-               ("tech_support", "Hỗ trợ KT"), ("addon_count", "Dịch vụ kèm"), ("payment_method", "Thanh toán")]
+CSV_COLUMNS = [("customer_id", "Customer ID"), ("contract_type", "Contract"), ("internet_service", "Internet"),
+               ("tenure_months", "Tenure (months)"), ("current_mrr_usd", "Monthly charge (USD)"),
+               ("billing_tickets", "Billing complaints"), ("tickets", "Tickets"), ("late_payment_rate", "Late payment rate"),
+               ("tech_support", "Tech support"), ("addon_count", "Add-ons"), ("payment_method", "Payment method")]
 
 
 @app.post("/api/explore/customers.csv")
 def explore_customers_csv():
-    """File CSV do server tạo: đúng những khách đang khớp bộ lọc, không giới hạn theo trang."""
+    """CSV built on the server: exactly the customers matching the filters, not limited to one page."""
     filters, params = _request_filters(), _list_params()
     rows = explore.customers(filters, params, export=True)["rows"]
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow([label for _, label in CSV_COLUMNS])
     writer.writerows([[r[k] for k, _ in CSV_COLUMNS] for r in rows])
-    # BOM để Excel mở đúng tiếng Việt.
+    # BOM so Excel opens the file as UTF-8.
     return Response("\ufeff" + out.getvalue(), content_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": f"attachment; filename=khach_can_cham_soc_{len(rows)}.csv"})
+                    headers={"Content-Disposition": f"attachment; filename=customers_to_contact_{len(rows)}.csv"})
 
 
 def _list_params() -> dict:

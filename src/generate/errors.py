@@ -1,7 +1,7 @@
-"""Cố ý cài lỗi dữ liệu giống thực tế vào các nguồn, và ghi lại chính xác số lượng từng loại.
+"""Deliberately inject realistic data errors into the sources, and record exactly how many of each.
 
-Mỗi hàm cài một loại lỗi và ghi vào ErrorLog, để giai đoạn làm sạch có "đáp án" đối chiếu:
-số lỗi phát hiện được ở bước ETL phải khớp với số lỗi đã cài ở đây.
+Each function injects one error type and records it in ErrorLog, so the cleaning stage has an "answer key":
+the number of errors found by the ETL must match the number injected here.
 """
 from dataclasses import dataclass, field
 
@@ -13,8 +13,8 @@ from src import config
 YES_VARIANTS = ["Y", "yes", "1", "YES"]
 NO_VARIANTS = ["N", "no", "0", "NO"]
 
-# Định dạng ngày khác nhau do nhiều màn hình nhập liệu / nhiều đời phần mềm CRM.
-# Không dùng MM/DD/YYYY để tránh trường hợp mơ hồ không thể phân giải (03/04 là ngày nào?).
+# Different date formats from several entry screens / CRM software generations.
+# MM/DD/YYYY is not used, to avoid cases that cannot be resolved (is 03/04 March or April?).
 DATE_FORMATS = [("%Y-%m-%d", 0.70), ("%d/%m/%Y", 0.15), ("%Y%m%d", 0.10), ("%d-%b-%Y", 0.05)]
 DATETIME_FORMATS = [("%Y-%m-%d %H:%M:%S", 0.78), ("%d/%m/%Y %H:%M", 0.15), ("%d-%b-%Y %I:%M %p", 0.07)]
 
@@ -38,11 +38,11 @@ class ErrorLog:
 
 def duplicate_customers(customers: pd.DataFrame, rng: np.random.Generator, log: ErrorLog,
                         n_exact: int = 20, n_conflict: int = 25, n_conflict_with_space: int = 10) -> pd.DataFrame:
-    """CRM cũ không có ràng buộc khoá chính nên một khách bị nhập 2 lần.
+    """The old CRM has no primary key constraint, so a customer gets entered twice.
 
-    - Trùng y hệt: nhân viên bấm lưu 2 lần.
-    - Trùng có xung đột: bản ghi được nhập lại sau với thông tin cập nhật (updated_at mới hơn);
-      một phần còn dính khoảng trắng ở customer_id nên GROUP BY customer_id thô sẽ không bắt được.
+    - Exact duplicate: the clerk pressed save twice.
+    - Conflicting duplicate: the record was re-entered later with updated information (newer updated_at);
+      some also carry trailing whitespace in customer_id, so a raw GROUP BY customer_id will not catch them.
     """
     picked = rng.choice(customers.index, size=n_exact + n_conflict, replace=False)
     exact = customers.loc[picked[:n_exact]].copy()
@@ -55,10 +55,10 @@ def duplicate_customers(customers: pd.DataFrame, rng: np.random.Generator, log: 
         conflict["customer_id"].iloc[:n_conflict_with_space] + " ")
 
     log.add("crm", "src_crm.dbo.customers", "customer_id", "duplicate_key_exact", n_exact,
-            "Bản ghi trùng y hệt (nhập 2 lần)")
+            "Exact duplicate record (entered twice)")
     log.add("crm", "src_crm.dbo.customers", "customer_id", "duplicate_key_conflicting", n_conflict,
-            f"Bản ghi trùng nhưng khác giá trị dependents, updated_at mới hơn; {n_conflict_with_space} "
-            "dòng trong số này có khoảng trắng cuối customer_id")
+            f"Duplicate record with a different dependents value and newer updated_at; {n_conflict_with_space} "
+            "of these rows have trailing whitespace in customer_id")
     out = pd.concat([customers, exact, conflict], ignore_index=True)
     return out.sample(frac=1, random_state=int(rng.integers(1_000_000))).reset_index(drop=True)
 
@@ -71,7 +71,7 @@ def yes_no_variants(df: pd.DataFrame, column: str, rate: float, rng: np.random.G
     df.loc[picked, column] = np.where(is_yes, rng.choice(YES_VARIANTS, len(picked)),
                                       rng.choice(NO_VARIANTS, len(picked)))
     log.add(source_system, obj, column, "inconsistent_boolean", len(picked),
-            "Giá trị Yes/No ghi lẫn Y/yes/1/YES và N/no/0/NO")
+            "Yes/No values mixed with Y/yes/1/YES and N/no/0/NO")
     return df
 
 
@@ -81,13 +81,13 @@ def extra_whitespace(df: pd.DataFrame, column: str, n: int, rng: np.random.Gener
     style = rng.integers(0, 3, n)
     values = df.loc[picked, column].astype(str).to_numpy()
     df.loc[picked, column] = np.select([style == 0, style == 1], [" " + values, values + " "], "  " + values + "  ")
-    log.add(source_system, obj, column, "extra_whitespace", n, "Khoảng trắng thừa đầu/cuối giá trị")
+    log.add(source_system, obj, column, "extra_whitespace", n, "Leading/trailing whitespace in the value")
     return df
 
 
 def mixed_date_format(series: pd.Series, formats: list[tuple[str, float]], rng: np.random.Generator,
                       log: ErrorLog, source_system: str, obj: str) -> pd.Series:
-    """Đổi cột ngày thành chuỗi với nhiều định dạng; ghi log số dòng không theo định dạng chuẩn (đầu danh sách)."""
+    """Turn a date column into strings in several formats; log the rows not in the standard format (first in the list)."""
     choice = rng.choice(len(formats), size=len(series), p=[p for _, p in formats])
     out = pd.Series(pd.NA, index=series.index, dtype="object")
     counts = {}
@@ -98,7 +98,7 @@ def mixed_date_format(series: pd.Series, formats: list[tuple[str, float]], rng: 
     non_standard = sum(c for fmt, c in counts.items() if fmt != formats[0][0])
     detail = ", ".join(f"'{fmt}': {c}" for fmt, c in counts.items())
     log.add(source_system, obj, series.name, "mixed_date_format", non_standard,
-            f"Ngày lưu dạng chuỗi nhiều định dạng ({detail}); số dòng tính là các dòng khác '{formats[0][0]}'")
+            f"Dates stored as strings in several formats ({detail}); counted rows are those not in '{formats[0][0]}'")
     return out
 
 
@@ -107,17 +107,17 @@ def drop_outage_month(invoices: pd.DataFrame, payments: pd.DataFrame, log: Error
     lost_ids = set(invoices.loc[lost, "invoice_id"])
     lost_payments = payments["invoice_id"].isin(lost_ids)
     log.add("billing", "src_billing.dbo.invoices", "billing_month", "missing_period", int(lost.sum()),
-            f"Sự cố hệ thống billing: toàn bộ hoá đơn tháng {config.BILLING_OUTAGE_MONTH} không được sinh")
+            f"Billing system outage: no invoices generated for {config.BILLING_OUTAGE_MONTH}")
     log.add("billing", "src_billing.dbo.payments", "invoice_id", "missing_period", int(lost_payments.sum()),
-            f"Thanh toán tương ứng với hoá đơn tháng {config.BILLING_OUTAGE_MONTH} cũng không có")
+            f"Payments for the {config.BILLING_OUTAGE_MONTH} invoices are missing too")
     return invoices[~lost].reset_index(drop=True), payments[~lost_payments].reset_index(drop=True)
 
 
 def orphan_invoices(invoices: pd.DataFrame, payments: pd.DataFrame, crm_ids: set[str],
                     rng: np.random.Generator, log: ErrorLog, n_customers: int = 8):
-    """Hoá đơn của khách không tồn tại trong CRM (tài khoản test, khách bị xoá khỏi CRM).
+    """Invoices for customers that do not exist in CRM (test accounts, customers deleted from CRM).
 
-    Hai hệ thống tách rời nên không có khoá ngoại ngăn chuyện này.
+    The two systems are separate, so no foreign key prevents this.
     """
     letters = np.array(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
     fake_ids = []
@@ -139,7 +139,7 @@ def orphan_invoices(invoices: pd.DataFrame, payments: pd.DataFrame, crm_ids: set
     orphan = pd.DataFrame(rows)
     orphan["invoice_date"] = orphan["billing_month"].dt.end_time.dt.normalize()
     orphan["due_date"] = orphan["invoice_date"] + pd.Timedelta(days=15)
-    # Dải số 9xxxx để không đụng số thứ tự hoá đơn thật trong cùng tháng.
+    # 9xxxx range so the numbers do not collide with real invoice sequence numbers in the same month.
     seq = orphan.groupby("billing_month").cumcount() + 90001
     orphan["invoice_id"] = "INV" + orphan["billing_month"].dt.strftime("%Y%m") + "-" + seq.astype(str)
 
@@ -155,24 +155,24 @@ def orphan_invoices(invoices: pd.DataFrame, payments: pd.DataFrame, crm_ids: set
     orphan_pay.insert(0, "payment_id", ["PAY" + str(last_seq + i + 1).zfill(7) for i in range(len(orphan_pay))])
 
     log.add("billing", "src_billing.dbo.invoices", "customer_id", "orphan_key", len(orphan),
-            f"Hoá đơn của {n_customers} customer_id không tồn tại trong CRM: {', '.join(fake_ids)}")
+            f"Invoices for {n_customers} customer_id not found in CRM: {', '.join(fake_ids)}")
     log.add("billing", "src_billing.dbo.payments", "customer_id", "orphan_key", len(orphan_pay),
-            "Thanh toán của các hoá đơn mồ côi ở trên")
+            "Payments of the orphan invoices above")
     return (pd.concat([invoices, orphan], ignore_index=True),
             pd.concat([payments, orphan_pay], ignore_index=True))
 
 
 def invoice_amount_errors(invoices: pd.DataFrame, rng: np.random.Generator, log: ErrorLog,
                           n_negative: int = 120, n_null: int = 150) -> pd.DataFrame:
-    """Amount âm do nhập nhầm dấu và amount NULL do lỗi tích hợp.
+    """Negative amount from a sign entry error, and NULL amount from an integration error.
 
-    Bảng payments vẫn giữ số tiền đúng, nên bước làm sạch có thể khôi phục amount NULL từ payment.
+    The payments table still holds the correct amount, so cleaning can recover NULL amounts from payments.
     """
     picked = rng.choice(invoices.index, size=n_negative + n_null, replace=False)
     invoices.loc[picked[:n_negative], "amount_usd"] = -invoices.loc[picked[:n_negative], "amount_usd"]
     invoices.loc[picked[n_negative:], "amount_usd"] = np.nan
     log.add("billing", "src_billing.dbo.invoices", "amount_usd", "negative_amount", n_negative,
-            "Amount bị đảo dấu âm do nhập nhầm")
+            "Amount sign flipped to negative by an entry error")
     log.add("billing", "src_billing.dbo.invoices", "amount_usd", "null_amount", n_null,
-            "Amount NULL do lỗi tích hợp; payments vẫn có số tiền đúng")
+            "NULL amount from an integration error; payments still hold the correct amount")
     return invoices

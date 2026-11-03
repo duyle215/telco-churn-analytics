@@ -1,10 +1,10 @@
-/* Điều phối toàn bộ ETL stg -> clean -> mart -> data quality. Gọi: EXEC dbo.usp_run_etl; */
+/* Orchestrates the whole ETL stg -> clean -> mart -> data quality. Call: EXEC dbo.usp_run_etl; */
 
 CREATE OR ALTER PROCEDURE clean.usp_run_all @batch_id UNIQUEIDENTIFIER
 AS
 BEGIN
     SET NOCOUNT ON;
-    -- Thứ tự quan trọng: CRM trước để Billing/Ticket đối chiếu khoá, invoices trước payments.
+    -- Order matters: CRM first so Billing/Tickets can check keys, invoices before payments.
     EXEC clean.usp_load_customers @batch_id;
     EXEC clean.usp_load_contracts @batch_id;
     EXEC clean.usp_load_services @batch_id;

@@ -1,106 +1,116 @@
-# Giai đoạn 1: Sinh dữ liệu nguồn
+# Stage 1: Generating the source data
 
-Dữ liệu gốc: IBM Telco Customer Churn (Kaggle), 7.043 khách, 21 cột, là ảnh chụp tại một thời điểm.
-Mọi thứ khác trong dự án (dòng thời gian, hoá đơn, thanh toán, ticket, chỉ tiêu) là **SYNTHETIC**,
-được dẫn xuất từ dữ liệu gốc bằng `python -m src.generate_sources` với `RANDOM_SEED = 42`.
-Không có khách hàng nào bị nhân bản hay upsample: 7.043 khách gốc vẫn là 7.043 khách
-(45 dòng trùng trong CRM là lỗi cố ý cài, xem mục 4).
+Base data: IBM Telco Customer Churn (Kaggle), 7,043 customers, 21 columns, a snapshot at a single point in time.
+Everything else in the project (timeline, invoices, payments, tickets, targets) is **SYNTHETIC**,
+derived from the base data by `python -m src.generate_sources` with `RANDOM_SEED = 42`.
+No customer is duplicated or upsampled: the 7,043 original customers stay 7,043 customers
+(the 45 duplicate CRM rows are a deliberately injected error, see section 4).
 
-Mọi tham số nằm trong [src/config.py](../src/config.py).
+All parameters live in [src/config.py](../src/config.py).
 
-## 1. Giả định tái dựng dòng thời gian
+## 1. Timeline reconstruction assumptions
 
-| Giả định | Chi tiết |
+| Assumption | Detail |
 |---|---|
-| Ngày snapshot | 2025-12-31 |
-| Tháng rời đi của khách churn | Rải ngẫu nhiên trong 2024-01..2025-12, mùa vụ nhẹ (biên độ ±12%, cao nhất tháng 1) |
-| Tháng ký hợp đồng | `signup_month = anchor_month − tenure`, trong đó anchor = tháng rời đi (khách churn) hoặc 2025-12 (khách còn hoạt động) |
-| Kỳ tính cước | Từ `signup_month + 1` đến `anchor_month`, nên mỗi khách có đúng `tenure` hoá đơn và tháng churn là tháng có hoá đơn cuối |
-| Khách tenure = 0 | Ký trong 12/2025, chưa có hoá đơn (khớp với 11 giá trị TotalCharges rỗng trong dữ liệu gốc) |
-| Hồ sơ khách | Gói dịch vụ, loại hợp đồng, phương thức thanh toán không đổi suốt vòng đời |
-| Giá | MonthlyCharges là giá ở tháng có hoá đơn cuối cùng; mỗi hoá đơn dao động ±2% (độ lệch chuẩn) quanh giá |
-| Sự kiện bất thường | Từ 2025-03 giá Fiber optic tăng 15%. Hoá đơn Fiber trước 03/2025 = MonthlyCharges / 1.15 (với khách còn dùng sau mốc). Khách churn Fiber có xác suất rơi vào 03, 04, 05/2025 cao gấp 1,6 / 2,6 / 1,9 lần |
-| Thanh toán | Hạn 15 ngày. Xác suất trễ cơ sở: Electronic check 12%, Mailed check 10%, tự động 3%. Khách churn ×2, và ×4 trong 3 tháng cuối. 25% khách churn bỏ ngang hoá đơn cuối |
-| Ticket | Hệ thống ticket chỉ có dữ liệu từ 2023-01. Cường độ Poisson/khách/tháng tăng khi không có TechSupport (×2,2), dùng Fiber (×1,4), là khách churn (×1,5, thêm ×3 trong 3 tháng cuối). Thêm ticket khiếu nại hoá đơn cho khách Fiber trong 03–05/2025 |
-| Chỉ tiêu Finance | Churn 2024 = 90% mức thực tế bình quân 2024; 2025 giảm thêm 8%. MRR = MRR thực tế tháng 12 năm trước × (1 + 0,6%/0,5%)^k |
+| Snapshot date | 2025-12-31 |
+| Exit month of churners | Spread at random over 2024-01..2025-12, with mild seasonality (amplitude ±12%, peak in January) |
+| Signup month | `signup_month = anchor_month - tenure`, where anchor = exit month (churners) or 2025-12 (active customers) |
+| Billing periods | From `signup_month + 1` to `anchor_month`, so each customer has exactly `tenure` invoices and the churn month is the month of the last invoice |
+| Customers with tenure = 0 | Signed up in 12/2025, no invoice yet (matches the 11 blank TotalCharges values in the base data) |
+| Customer profile | Plan, contract type and payment method do not change over the lifetime |
+| Price | MonthlyCharges is the price in the last billed month; each invoice varies ±2% (standard deviation) around it |
+| Planted event | From 2025-03 the Fiber optic price rises 15%. Fiber invoices before 03/2025 = MonthlyCharges / 1.15 (for customers still active after it). Fiber churners are 1.6 / 2.6 / 1.9 times more likely to leave in 03, 04, 05/2025 |
+| Payments | 15-day terms. Base late probability: Electronic check 12%, Mailed check 10%, automatic 3%. Churners x2, and x4 in their last 3 months. 25% of churners skip their final invoice |
+| Tickets | The ticket system only has data from 2023-01. Poisson intensity per customer per month rises without TechSupport (x2.2), with Fiber (x1.4), for churners (x1.5, a further x3 in the last 3 months). Extra billing-complaint tickets for every Fiber customer in 03-05/2025 |
+| Finance targets | 2024 churn = 90% of the actual 2024 average; 2025 a further 8% lower. MRR = actual MRR of the previous December x (1 + 0.6%/0.5%)^k |
 
-**Hệ quả cần nhớ khi phân tích:** trước 2024-01 không có khách nào churn (dữ liệu gốc chỉ giữ những
-khách còn ở lại đến cửa sổ 24 tháng). Vì vậy churn rate và các KPI liên quan chỉ có ý nghĩa
-trong **2024-01..2025-12**. Số khách trước 2024 tăng đều là do thiên lệch sống sót (survivorship bias),
-không phải tăng trưởng thật.
+**What this means for the analysis:**
 
-## 2. Các hệ thống nguồn
+- Before 2024-01 no customer churns (the base data only keeps customers who stayed until the 24-month window).
+  Churn rate and related KPIs are therefore only meaningful in **2024-01..2025-12**. The steady growth in customers
+  before 2024 is survivorship bias, not real growth.
+- The price event, its timing, the ticket spike, late payments before churn and the target miss are all **planted**.
+  The analysis uses them to check that its methods recover a known signal, and does not report them as business findings.
+- The price event only changes **when** Fiber churners leave, not **how many**: the total number of Fiber churners comes
+  from the base data. A spike in 03-05/2025 is balanced by fewer Fiber churners in other months, so this data cannot
+  measure the net churn cost of the price increase.
+- Billing-complaint tickets during the event are drawn for every Fiber customer, independent of who churns, so they do
+  not predict churn at customer level.
 
-| Nguồn | Đối tượng | Số dòng | Ghi chú thiết kế |
+## 2. Source systems
+
+| Source | Object | Rows | Design note |
 |---|---|---:|---|
-| CRM (`src_crm`) | `customers` | 7.088 | Không có khoá chính, nên có thể trùng khách |
-| | `contracts` | 7.043 | Ngày và cờ Yes/No lưu NVARCHAR; `end_date` chỉ có ở khách đã rời đi |
-| | `services` | 7.043 | 1 dòng/khách, dạng wide giống bảng gốc |
-| Billing (`src_billing`) | `invoices` | 223.470 | Không có khoá ngoại sang CRM (hai hệ thống tách rời) |
-| | `payments` | 217.709 | Số tiền luôn đúng, nên dùng được để khôi phục amount bị NULL |
-| Finance | `data/source/targets.xlsx` | 2 sheet × 12 tháng | Nhập tay |
-| Hệ thống ticket | `data/source/support_tickets.csv` | 10.689 | 2023-01..2025-12 |
-| API tỷ giá | [src/fx/client.py](../src/fx/client.py) | Theo khoảng tháng có hoá đơn | Xem mục 3 |
+| CRM (`src_crm`) | `customers` | 7,088 | No primary key, so customers can be duplicated |
+| | `contracts` | 7,043 | Dates and Yes/No flags stored as NVARCHAR; `end_date` only for customers who left |
+| | `services` | 7,043 | 1 row per customer, wide like the base table |
+| Billing (`src_billing`) | `invoices` | 223,470 | No foreign key to CRM (separate systems) |
+| | `payments` | 217,709 | Amounts are always correct, so they can recover NULL invoice amounts |
+| Finance | `data/source/targets.xlsx` | 2 sheets x 12 months | Typed by hand, in Vietnamese |
+| Ticket system | `data/source/support_tickets.csv` | 10,689 | 2023-01..2025-12 |
+| FX rate API | [src/fx/client.py](../src/fx/client.py) | Months with invoices | See section 3 |
 
-DDL nguồn: [sql/ddl/source/](../sql/ddl/source/).
+Source DDL: [sql/ddl/source/](../sql/ddl/source/).
 
-## 3. Tỷ giá USD→VND (API)
+## 3. USD to VND exchange rate (API)
 
-- Từ 2024-03 trở đi: [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-api), tỷ giá
-  của ngày đầu tiên có dữ liệu trong tháng (22 tháng). API này không có lịch sử trước 2024-03-02.
-- Trước 2024-03: World Bank, chỉ số `PA.NUS.FCRF` (tỷ giá chính thức, **bình quân năm**), 74 tháng.
-  Các tháng trong cùng một năm nhận cùng một giá trị.
-- Không dùng mock hay dữ liệu giả thay thế: nếu API lỗi, bước nạp ghi `FAILED` vào `etl_log` và pipeline
-  dừng, để mọi tỷ giá trong kho đều truy được về một API công khai.
-- Mỗi bản ghi giữ `provider` và `granularity` để báo cáo ghi rõ nguồn của tỷ giá.
+- From 2024-03 onwards: [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-api), the rate of the
+  first day with data in the month (22 months). This API has no history before 2024-03-02.
+- Before 2024-03: World Bank, indicator `PA.NUS.FCRF` (official rate, **annual average**), 70 months.
+  Every month of a year gets the same value.
+- No mocks or made-up fallback: if an API fails, the load step writes `FAILED` to `etl_log` and the pipeline
+  stops, so every rate in the warehouse can be traced to a public API.
+- Each record keeps `provider` and `granularity`, so reports can state where a rate came from.
 
-## 4. Lỗi dữ liệu đã cài
+## 4. Injected data errors
 
-Danh sách đầy đủ, sinh tự động mỗi lần chạy: `data/source/injected_errors.csv`. Bảng dưới lấy từ lần chạy với seed 42.
+The full list is generated on every run: `data/source/injected_errors.csv`. The table below is from the run with seed 42.
 
-| # | Đối tượng | Cột | Loại lỗi | Số dòng | Mô tả |
+| # | Object | Column | Error type | Rows | Description |
 |---:|---|---|---|---:|---|
-| 1 | contracts | total_charges | blank_value_inherited | 11 | Có sẵn trong dữ liệu gốc |
-| 2 | customers | senior_citizen | inconsistent_boolean_inherited | 7.043 | Có sẵn: 0/1 trong khi các cột cờ khác dùng Yes/No |
-| 3 | customers | customer_id | duplicate_key_exact | 20 | Trùng y hệt |
-| 4 | customers | customer_id | duplicate_key_conflicting | 25 | Khác `dependents`, `updated_at` mới hơn; 10 dòng có khoảng trắng cuối ID |
+| 1 | contracts | total_charges | blank_value_inherited | 11 | Present in the base data |
+| 2 | customers | senior_citizen | inconsistent_boolean_inherited | 7,043 | Present in the base data: 0/1 while other flags use Yes/No |
+| 3 | customers | customer_id | duplicate_key_exact | 20 | Exact duplicate |
+| 4 | customers | customer_id | duplicate_key_conflicting | 25 | Different `dependents`, newer `updated_at`; 10 rows have a trailing space in the ID |
 | 5 | customers | partner | inconsistent_boolean | 425 | Y/yes/1/YES, N/no/0/NO |
-| 6 | customers | dependents | inconsistent_boolean | 425 | như trên |
+| 6 | customers | dependents | inconsistent_boolean | 425 | same |
 | 7 | customers | gender | extra_whitespace | 80 | |
 | 8 | contracts | paperless_billing | inconsistent_boolean | 352 | |
 | 9 | contracts | churn_flag | inconsistent_boolean | 281 | |
 | 10 | contracts | contract_type | extra_whitespace | 120 | |
 | 11 | contracts | payment_method | extra_whitespace | 150 | |
-| 12 | contracts | start_date | mixed_date_format | 2.133 | Lẫn `yyyy-mm-dd`, `dd/mm/yyyy`, `yyyymmdd`, `dd-Mon-yyyy` |
-| 13 | contracts | end_date | mixed_date_format | 535 | như trên |
+| 12 | contracts | start_date | mixed_date_format | 2,133 | Mix of `yyyy-mm-dd`, `dd/mm/yyyy`, `yyyymmdd`, `dd-Mon-yyyy` |
+| 13 | contracts | end_date | mixed_date_format | 535 | same |
 | 14 | services | phone_service | inconsistent_boolean | 211 | |
 | 15 | services | customer_id | extra_whitespace | 60 | |
-| 16 | invoices | billing_month | missing_period | 4.573 | Sự cố billing: không có hoá đơn tháng 2024-08 |
-| 17 | payments | invoice_id | missing_period | 4.552 | Thanh toán tương ứng cũng không có |
-| 18 | invoices | customer_id | orphan_key | 53 | 8 customer_id không có trong CRM |
-| 19 | payments | customer_id | orphan_key | 53 | Thanh toán của các hoá đơn mồ côi |
-| 20 | invoices | amount_usd | negative_amount | 120 | Đảo dấu |
-| 21 | invoices | amount_usd | null_amount | 150 | Payment vẫn có số tiền đúng |
+| 16 | invoices | billing_month | missing_period | 4,573 | Billing outage: no invoices for 2024-08 |
+| 17 | payments | invoice_id | missing_period | 4,552 | The matching payments are missing too |
+| 18 | invoices | customer_id | orphan_key | 53 | 8 customer_id values not in CRM |
+| 19 | payments | customer_id | orphan_key | 53 | Payments of the orphan invoices |
+| 20 | invoices | amount_usd | negative_amount | 120 | Sign flipped |
+| 21 | invoices | amount_usd | null_amount | 150 | Payments still hold the correct amount |
 | 22 | invoices | customer_id | extra_whitespace | 400 | |
 | 23 | support_tickets.csv | customer_id | extra_whitespace | 90 | |
-| 24 | support_tickets.csv | created_at | mixed_date_format | 2.344 | Lẫn `yyyy-mm-dd HH:MM:SS`, `dd/mm/yyyy HH:MM`, `dd-Mon-yyyy hh:mm AM/PM` |
-| 25 | support_tickets.csv | resolved_at | mixed_date_format | 2.288 | như trên |
-| 26 | targets.xlsx | (header) | non_standard_header | 2 sheet | Header ở dòng 4; tên cột có dấu, khoảng trắng thừa, kèm đơn vị, khác nhau giữa 2 sheet |
-| 27 | targets.xlsx | Tháng / Thang | mixed_date_format | 12 | Sheet 2024 ghi ngày Excel; sheet 2025 ghi chuỗi `Tmm/yyyy` |
-| 28 | targets.xlsx | Churn Rate mục tiêu (%) | unit_inconsistency | 24 | Ghi 1.39 nghĩa là 1,39% |
+| 24 | support_tickets.csv | created_at | mixed_date_format | 2,344 | Mix of `yyyy-mm-dd HH:MM:SS`, `dd/mm/yyyy HH:MM`, `dd-Mon-yyyy hh:mm AM/PM` |
+| 25 | support_tickets.csv | resolved_at | mixed_date_format | 2,288 | same |
+| 26 | targets.xlsx | (header) | non_standard_header | 2 sheets | Header on row 4; column names with diacritics, extra spaces and units, different between the 2 sheets |
+| 27 | targets.xlsx | Tháng / Thang | mixed_date_format | 12 | The 2024 sheet stores Excel dates; the 2025 sheet stores the text `Tmm/yyyy` |
+| 28 | targets.xlsx | Churn Rate mục tiêu (%) | unit_inconsistency | 24 | 1.39 means 1.39% |
 
-**Lưu ý cho bước làm sạch:** SQL Server bỏ qua khoảng trắng *cuối chuỗi* khi so sánh `=` và `GROUP BY`.
-Vì vậy `customer_id <> LTRIM(RTRIM(customer_id))` chỉ bắt được 274/400 dòng lỗi ở `invoices`.
-Muốn phát hiện đủ phải dùng `DATALENGTH` hoặc `LIKE '% '`.
+**Note for the cleaning step:** SQL Server ignores *trailing* spaces when comparing with `=` and in `GROUP BY`.
+So `customer_id <> LTRIM(RTRIM(customer_id))` only catches 274 of the 400 bad rows in `invoices`.
+Catching them all needs `DATALENGTH` or `LIKE '% '`.
 
-## 5. Kiểm tra sau khi sinh (số liệu từ truy vấn thật)
+## 5. Checks after generation (figures from real queries)
 
-| Kiểm tra | Kết quả |
+These confirm that the generator produced the intended signals. They describe the simulation, not the business.
+
+| Check | Result |
 |---|---|
-| Khách churn theo tháng (trước khi cài lỗi) | 54–94/tháng ở các tháng thường; **120 / 149 / 103** trong 03 / 04 / 05/2025 (riêng Fiber: 94 / 121 / 89) |
-| Churn rate tháng | 1,11%–2,13% ở các tháng thường; **2,49% / 3,10% / 2,15%** trong 03 / 04 / 05/2025 |
-| MRR | 296.869 USD (02/2025) → 320.666 USD (03/2025), tăng 8% do tăng giá Fiber |
-| Tỷ lệ thanh toán trễ | Khách churn 22,1%, khách ở lại 6,0%; Electronic check 17,7%, tự động khoảng 3,4% |
-| Ticket bình quân/khách (2023–2025) | Không TechSupport: 2,13 (ở lại) / 2,40 (churn); có TechSupport: 1,16 / 1,48 |
-| Ticket Billing/tháng | 84 / 73 trong 01 / 02/2025; **233 / 185 / 141** trong 03 / 04 / 05/2025; 88 trong 06/2025 |
-| Đối chiếu log lỗi với DB | Khớp: 7.088 dòng customers (7.043 khách duy nhất sau TRIM), 120 âm, 150 NULL, 53 hoá đơn mồ côi của 8 ID, không có hoá đơn 2024-08 |
+| Churners per month (before error injection) | 54-94 in normal months; **120 / 149 / 103** in 03 / 04 / 05/2025 (Fiber only: 94 / 121 / 89) |
+| Monthly churn rate | 1.11%-2.13% in normal months; **2.49% / 3.10% / 2.15%** in 03 / 04 / 05/2025 |
+| MRR | 296,869 USD (02/2025) -> 320,666 USD (03/2025), +8% from the Fiber price increase |
+| Late payment rate | Churners 22.1%, retained customers 6.0%; Electronic check 17.7%, automatic about 3.4% |
+| Tickets per customer (2023-2025) | No TechSupport: 2.13 (retained) / 2.40 (churned); with TechSupport: 1.16 / 1.48 |
+| Billing tickets per month | 84 / 73 in 01 / 02/2025; **233 / 185 / 141** in 03 / 04 / 05/2025; 88 in 06/2025 |
+| Error log vs database | Match: 7,088 customer rows (7,043 unique after TRIM), 120 negative, 150 NULL, 53 orphan invoices for 8 IDs, no invoices for 2024-08 |

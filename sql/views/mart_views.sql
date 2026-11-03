@@ -1,16 +1,16 @@
 /*
-  View phân tích trong mart, dùng cho sql/analysis/ và Power BI.
-  Quy ước chỉ số dùng xuyên suốt:
-  - Khách trong tháng   = số dòng fact_billing của tháng (khách có tính cước tháng đó).
-  - Churn rate tháng    = khách có is_churn_month = 1 / khách trong tháng.
-  - MRR                 = tổng amount_usd trong tháng. ARPU = MRR / khách.
-  - MRR mất do churn    = cước tháng cuối của khách rời đi trong tháng (doanh thu định kỳ sẽ mất từ tháng sau).
-  - Churn rate theo tháng của một nhóm = khách rời đi / khách-tháng trong cửa sổ phân tích,
-    để so sánh công bằng giữa các nhóm có thời gian quan sát khác nhau.
-  Chỉ số churn chỉ có ý nghĩa trong cửa sổ phân tích 2024-01..2025-12 (dim_date.is_analysis_window).
+  Analytical views in mart, used by sql/analysis/ and Power BI.
+  Metric conventions used throughout:
+  - Customers in month = fact_billing rows of the month (customers billed that month).
+  - Monthly churn rate = customers with is_churn_month = 1 / customers in month.
+  - MRR                = sum of amount_usd in the month. ARPU = MRR / customers.
+  - MRR lost to churn  = last bill of customers leaving in the month (recurring revenue lost from next month on).
+  - Monthly churn rate of a group = churners / customer-months in the analysis window,
+    so groups with different observation time compare fairly.
+  Churn metrics are only meaningful inside the analysis window 2024-01..2025-12 (dim_date.is_analysis_window).
 */
 
-/* 1 dòng / khách có tính cước: hồ sơ hiện tại + hành vi. Dùng cho driver, phân khúc rủi ro và drill-through. */
+/* 1 row per billed customer: current profile + behaviour. Used for drivers, risk segments and drill-through. */
 CREATE OR ALTER VIEW mart.v_customer_profile AS
 WITH ranked AS (
     SELECT f.customer_key, f.contract_key, f.service_key, f.payment_method_key, f.amount_usd,
@@ -54,7 +54,7 @@ JOIN billing b ON b.customer_key = c.customer_key
 LEFT JOIN tickets t ON t.customer_key = c.customer_key;
 GO
 
-/* KPI theo tháng so với chỉ tiêu. */
+/* Monthly KPIs against target. */
 CREATE OR ALTER VIEW mart.v_kpi_monthly AS
 WITH m AS (
     SELECT date_key,
@@ -84,7 +84,7 @@ JOIN mart.dim_date d ON d.date_key = m.date_key
 LEFT JOIN mart.fact_target t ON t.date_key = m.date_key;
 GO
 
-/* Churn rate theo từng driver, ở cấp khách (khách có tính cước trong cửa sổ phân tích). */
+/* Churn rate by driver, at customer level (customers billed in the analysis window). */
 CREATE OR ALTER VIEW mart.v_churn_drivers AS
 WITH p AS (SELECT * FROM mart.v_customer_profile WHERE in_analysis_window = 1),
 drivers AS (
@@ -107,7 +107,7 @@ FROM drivers
 GROUP BY driver, driver_value, sort_order;
 GO
 
-/* Churn Fiber vs DSL trong cùng loại hợp đồng (phân tích có kiểm soát). */
+/* Fiber vs DSL churn within the same contract type (controlled comparison). */
 CREATE OR ALTER VIEW mart.v_churn_internet_by_contract AS
 SELECT contract_type, contract_sort, internet_service,
        COUNT(*) AS customers,
@@ -120,9 +120,9 @@ GROUP BY contract_type, contract_sort, internet_service;
 GO
 
 /*
-  Cohort retention theo tháng ký hợp đồng. Chỉ lấy cohort có kỳ cước đầu tiên trong cửa sổ phân tích:
-  cohort cũ hơn chỉ còn những khách sống sót tới 2024 nên retention sẽ bị thổi phồng.
-  month_offset 0 = kỳ cước đầu tiên. Khách churn vẫn được tính trong tháng rời đi (tháng có hoá đơn cuối).
+  Cohort retention by signup month. Only cohorts whose first bill is inside the analysis window:
+  older cohorts only contain customers who survived until 2024, so their retention would be inflated.
+  month_offset 0 = first billing period. Churners still count in their exit month (the month of their last bill).
 */
 CREATE OR ALTER VIEW mart.v_cohort_retention AS
 WITH cohort AS (
@@ -145,8 +145,8 @@ FROM activity a JOIN size s ON s.signup_month = a.signup_month;
 GO
 
 /*
-  Phát hiện bất thường: giá trị tháng lệch khỏi trung bình 24 tháng quá 2 độ lệch chuẩn.
-  Xét churn rate và số ticket, cho toàn bộ khách và từng loại internet.
+  Anomaly detection: monthly values more than 2 standard deviations away from the 24-month mean.
+  Covers churn rate and ticket counts, for all customers and for each internet type.
 */
 CREATE OR ALTER VIEW mart.v_anomaly_monthly AS
 WITH churn AS (
@@ -199,11 +199,11 @@ JOIN mart.dim_date d ON d.year_month = s.year_month AND d.is_month_start = 1;
 GO
 
 /*
-  Phân khúc rủi ro = loại hợp đồng x loại internet x hình thức thanh toán.
-  - monthly_churn_rate: khách rời đi / khách-tháng trong cửa sổ phân tích.
-  - current_mrr_usd: MRR tháng snapshot của khách còn hoạt động.
-  - expected_mrr_loss_usd: MRR dự kiến mất mỗi tháng nếu churn giữ nguyên = current_mrr x monthly_churn_rate.
-  Ngưỡng "rủi ro cao" (đồng thời cả ba): >= 5% khách, churn >= 1,5 lần bình quân, >= 10% MRR.
+  Risk segment = contract type x internet type x payment type.
+  - monthly_churn_rate: churners / customer-months in the analysis window.
+  - current_mrr_usd: snapshot-month MRR of active customers.
+  - expected_mrr_loss_usd: expected MRR lost per month if churn stays the same = current_mrr x monthly_churn_rate.
+  "High risk" threshold (all three at once): >= 5% of customers, churn >= 1.5x average, >= 10% of MRR.
 */
 CREATE OR ALTER VIEW mart.v_risk_segments AS
 WITH window_stats AS (
@@ -251,7 +251,7 @@ SELECT CONCAT(contract_type, N' | ', internet_service, N' | ', payment_type) AS 
 FROM combined;
 GO
 
-/* Số liệu nền cho what-if: quy mô, MRR và churn của từng loại hợp đồng. */
+/* Baseline numbers for the what-if: size, MRR and churn of each contract type. */
 CREATE OR ALTER VIEW mart.v_whatif_contract_base AS
 WITH window_stats AS (
     SELECT ct.contract_type, ct.contract_sort,
@@ -280,7 +280,7 @@ SELECT w.contract_type, w.contract_sort, n.active_customers, n.current_mrr_usd,
 FROM window_stats w JOIN now_stats n ON n.contract_type = w.contract_type;
 GO
 
-/* Kết quả kiểm tra chất lượng của batch gần nhất và thống kê bản ghi bị loại, cho trang Data Quality. */
+/* Latest batch's data quality results and rejected-row summary, for the Data Quality page. */
 CREATE OR ALTER VIEW mart.v_dq_latest AS
 SELECT r.*
 FROM mart.dq_check_results r

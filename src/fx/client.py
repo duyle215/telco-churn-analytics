@@ -1,16 +1,16 @@
-"""Lấy tỷ giá USD -> VND theo tháng từ API công khai miễn phí (không cần API key).
+"""Fetch monthly USD -> VND exchange rates from free public APIs (no API key needed).
 
-Nguồn:
-1. fawazahmed0/exchange-api (qua CDN jsdelivr, mirror pages.dev): tỷ giá theo ngày,
-   chỉ có lịch sử từ 2024-03-02. Lấy tỷ giá của ngày đầu tiên có dữ liệu trong tháng.
-2. World Bank, chỉ số PA.NUS.FCRF (tỷ giá chính thức, bình quân năm): dùng cho các tháng
-   trước 2024-03 vì nguồn 1 không có. Mọi tháng trong năm nhận cùng một giá trị bình quân năm.
+Sources:
+1. fawazahmed0/exchange-api (via the jsdelivr CDN, pages.dev mirror): daily rates,
+   history only from 2024-03-02. Takes the rate of the first day with data in the month.
+2. World Bank, indicator PA.NUS.FCRF (official rate, annual average): used for months
+   before 2024-03 because source 1 has none. Every month of a year gets the same annual average.
 
-Không có phương án dự phòng bằng dữ liệu giả: API lỗi thì ném lỗi để bước nạp ghi FAILED
-vào etl_log, thay vì lặng lẽ nạp một con số không truy được nguồn gốc.
-Mỗi bản ghi giữ provider và granularity để tầng DW và báo cáo biết con số đến từ đâu.
+No fallback to made-up data: if an API fails, an error is raised so the load step records FAILED
+in etl_log, instead of silently loading a number that cannot be traced to a source.
+Each record keeps provider and granularity so the DW and reports know where a number came from.
 
-Chạy thử:  python -m src.fx.client --start 2018-01 --end 2025-12
+Try it:  python -m src.fx.client --start 2018-01 --end 2025-12
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -34,7 +34,7 @@ MAX_PARALLEL_REQUESTS = 6
 def _fetch_daily(month: pd.Period) -> dict:
     rate_date = max(month.start_time, DAILY_API_FIRST_DATE).strftime("%Y-%m-%d")
     last_error = None
-    # URL thứ hai là mirror chính thức của cùng bộ dữ liệu, không phải nguồn khác.
+    # The second URL is the official mirror of the same dataset, not a different source.
     for template in DAILY_API_URLS:
         try:
             resp = requests.get(template.format(date=rate_date), timeout=TIMEOUT_SECONDS)
@@ -44,18 +44,18 @@ def _fetch_daily(month: pd.Period) -> dict:
                     "provider": "fawazahmed0-currency-api", "granularity": "daily"}
         except (requests.RequestException, KeyError, ValueError) as exc:
             last_error = exc
-    raise ConnectionError(f"Không lấy được tỷ giá ngày {rate_date}: {last_error}")
+    raise ConnectionError(f"Could not fetch the exchange rate for {rate_date}: {last_error}")
 
 
 def _fetch_world_bank(months: list[pd.Period]) -> list[dict]:
     years = sorted({m.year for m in months})
     resp = requests.get(WORLD_BANK_URL.format(start=years[0], end=years[-1]), timeout=TIMEOUT_SECONDS)
     resp.raise_for_status()
-    # Phản hồi World Bank có dạng [metadata, [records]].
+    # The World Bank response looks like [metadata, [records]].
     annual = {int(r["date"]): r["value"] for r in resp.json()[1] if r["value"] is not None}
     missing = sorted(set(years) - set(annual))
     if missing:
-        raise ConnectionError(f"World Bank chưa có số liệu năm {missing}")
+        raise ConnectionError(f"World Bank has no data yet for years {missing}")
     return [{"month": str(m), "rate_date": f"{m.year}-12-31", "usd_vnd": annual[m.year],
              "provider": "world-bank-PA.NUS.FCRF", "granularity": "annual_average"} for m in months]
 

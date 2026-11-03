@@ -1,4 +1,4 @@
-/* Hàm và thủ tục dùng chung cho ETL. */
+/* Shared ETL functions and procedures. */
 
 CREATE OR ALTER PROCEDURE dbo.usp_etl_log_start
     @batch_id UNIQUEIDENTIFIER, @layer VARCHAR(10), @step_name NVARCHAR(100),
@@ -33,7 +33,7 @@ BEGIN
 END
 GO
 
-/* Gom mọi biến thể Yes/Y/yes/1 và No/N/no/0 về 1/0; giá trị lạ trả NULL để bị loại có lý do. */
+/* Map every Yes/Y/yes/1 and No/N/no/0 variant to 1/0; unknown values return NULL so they get rejected with a reason. */
 CREATE OR ALTER FUNCTION clean.fn_yes_no_to_bit (@value NVARCHAR(50))
 RETURNS BIT
 AS
@@ -45,7 +45,7 @@ BEGIN
 END
 GO
 
-/* Chuẩn hoá giá trị cột dịch vụ về đúng bộ nhãn của nguồn gốc. */
+/* Normalise service column values to the exact label set of the original data. */
 CREATE OR ALTER FUNCTION clean.fn_normalize_service_value (@value NVARCHAR(50))
 RETURNS NVARCHAR(30)
 AS
@@ -62,7 +62,7 @@ BEGIN
 END
 GO
 
-/* Nhận diện định dạng chuỗi ngày; dùng cho cả bước parse lẫn báo cáo chất lượng dữ liệu. */
+/* Detect the format of a date string; used both for parsing and for data quality reporting. */
 CREATE OR ALTER FUNCTION clean.fn_date_format (@value NVARCHAR(100))
 RETURNS VARCHAR(20)
 AS
@@ -80,9 +80,9 @@ END
 GO
 
 /*
-  Parse chuỗi ngày/giờ nhiều định dạng. Dạng dd/mm/yyyy được hiểu là NGÀY trước THÁNG
-  (quy ước nhập liệu ở Việt Nam). Tên tháng tiếng Anh được tra bằng bảng cố định thay vì
-  dựa vào SET LANGUAGE, để kết quả không phụ thuộc cấu hình ngôn ngữ của phiên kết nối.
+  Parse date/time strings in several formats. dd/mm/yyyy is read as DAY before MONTH
+  (the Vietnamese data-entry convention). English month names are looked up in a fixed table instead of
+  relying on SET LANGUAGE, so the result does not depend on the session language.
 */
 CREATE OR ALTER FUNCTION clean.fn_parse_datetime (@value NVARCHAR(100))
 RETURNS DATETIME2(0)
@@ -108,8 +108,8 @@ END
 GO
 
 /*
-  Ghi các dòng trong bảng tạm #reject (do proc gọi tạo) vào clean.rejected_records.
-  Nếu #reject.raw_record trống, lấy nguyên dòng stg tương ứng dạng JSON để truy vết.
+  Write the rows of the temp table #reject (created by the caller) to clean.rejected_records.
+  When #reject.raw_record is empty, store the matching stg row as JSON for tracing.
 */
 CREATE OR ALTER PROCEDURE clean.usp_write_rejects
     @batch_id UNIQUEIDENTIFIER, @source_table NVARCHAR(128)
@@ -117,7 +117,7 @@ AS
 BEGIN
     SET NOCOUNT ON;
     IF OBJECT_ID(@source_table) IS NULL
-        THROW 50001, N'usp_write_rejects: bảng nguồn không tồn tại', 1;
+        THROW 50001, N'usp_write_rejects: source table does not exist', 1;
     DECLARE @qualified NVARCHAR(300) = QUOTENAME(PARSENAME(@source_table, 2)) + N'.' + QUOTENAME(PARSENAME(@source_table, 1));
     DECLARE @sql NVARCHAR(MAX) = N'
         INSERT INTO clean.rejected_records
@@ -132,7 +132,7 @@ BEGIN
 END
 GO
 
-/* Tóm tắt #reject thành chuỗi "rejected 45: DUPLICATE_KEY=45" để ghi vào etl_log.message. */
+/* Summarise #reject as "rejected 45: DUPLICATE_KEY=45" for etl_log.message. */
 CREATE OR ALTER PROCEDURE clean.usp_reject_summary @message NVARCHAR(4000) OUTPUT
 AS
 BEGIN

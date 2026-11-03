@@ -1,14 +1,14 @@
-"""GIAI ĐOẠN 2: nạp 4 loại nguồn vào TelcoDW.stg NGUYÊN TRẠNG.
+"""STAGE 2: load the 4 source types into TelcoDW.stg AS IS.
 
-Chạy:  python -m src.load_staging
+Run:  python -m src.load_staging
 
-Nguyên tắc:
-- Không làm sạch, không ép kiểu, không lọc dòng. Chỉ thêm load_date và source_system.
-- Full reload: stg được tạo lại mỗi lần chạy, nên chạy lại nhiều lần cho cùng kết quả.
-- Mỗi bảng nạp trong một transaction riêng và ghi 1 dòng vào dbo.etl_log.
-  Số dòng đọc từ nguồn phải bằng số dòng ghi vào stg, nếu không thì bước đó FAILED.
-- CRM/Billing được đọc qua kết nối riêng tới database nguồn rồi ghi sang DW, không dùng
-  INSERT ... SELECT xuyên database: thực tế các hệ thống nguồn nằm ở server khác với kho dữ liệu.
+Principles:
+- No cleaning, no type conversion, no row filtering. Only load_date and source_system are added.
+- Full reload: stg is recreated on every run, so repeated runs give the same result.
+- Each table loads in its own transaction and writes 1 row to dbo.etl_log.
+  Rows read from the source must equal rows written to stg, otherwise the step is FAILED.
+- CRM/Billing are read through a separate connection to the source database and written to the DW, not with
+  a cross-database INSERT ... SELECT: in practice source systems live on a different server from the warehouse.
 """
 import csv
 import datetime as dt
@@ -26,7 +26,7 @@ DW_DDL_DIR = config.SQL_DIR / "ddl"
 FETCH_CHUNK = 20000
 
 DB_SOURCES = [
-    # (source_system, database nguồn, bảng nguồn, bảng stg, danh sách cột)
+    # (source_system, source database, source table, stg table, column list)
     ("CRM", config.SRC_CRM_DB, "dbo.customers", "stg.crm_customers",
      ["customer_id", "gender", "senior_citizen", "partner", "dependents", "created_at", "updated_at"]),
     ("CRM", config.SRC_CRM_DB, "dbo.contracts", "stg.crm_contracts",
@@ -43,8 +43,8 @@ DB_SOURCES = [
 
 TICKET_COLUMNS = ["ticket_id", "customer_id", "created_at", "category", "priority", "channel",
                   "status", "resolved_at"]
-# Dòng header của sheet chỉ tiêu: dòng đầu tiên có ít nhất ngần này ô có giá trị
-# (các dòng tiêu đề/người lập phía trên chỉ có 1 ô).
+# Header row of a target sheet: the first row with at least this many non-empty cells
+# (the title/author rows above it have only 1 cell).
 EXCEL_HEADER_MIN_CELLS = 3
 
 
@@ -78,12 +78,12 @@ def run_step(log: EtlLogger, conn, step_name: str, object_name: str, source_syst
         try:
             loader(result)
             if result.rows_read != result.rows_written:
-                raise ValueError(f"Số dòng đọc ({result.rows_read}) khác số dòng ghi ({result.rows_written})")
+                raise ValueError(f"Rows read ({result.rows_read}) differ from rows written ({result.rows_written})")
             conn.commit()
         except Exception:
             conn.rollback()
             raise
-    print(f"  {object_name:<30} {result.rows_written:>9,} dòng  {result.message or ''}")
+    print(f"  {object_name:<30} {result.rows_written:>9,} rows  {result.message or ''}")
 
 
 def copy_db_table(dw, src_db: str, src_table: str, stg_table: str, columns: list[str],
@@ -117,8 +117,8 @@ def load_targets_excel(dw, load_date: dt.datetime, result: StepResult) -> None:
         header_idx = next((i for i, r in enumerate(sheet_rows)
                            if sum(v is not None for v in r) >= EXCEL_HEADER_MIN_CELLS), None)
         if header_idx is None:
-            raise ValueError(f"Sheet '{ws.title}': không tìm thấy dòng header")
-        skipped.append(f"{ws.title}: bỏ qua {header_idx} dòng tiêu đề, header ở dòng {header_idx + 1}")
+            raise ValueError(f"Sheet '{ws.title}': header row not found")
+        skipped.append(f"{ws.title}: skipped {header_idx} title rows, header on row {header_idx + 1}")
         headers = sheet_rows[header_idx]
         for offset, values in enumerate(sheet_rows[header_idx + 1:], start=header_idx + 2):
             if all(v is None for v in values):
@@ -134,9 +134,9 @@ def load_targets_excel(dw, load_date: dt.datetime, result: StepResult) -> None:
     db.insert_rows(dw, "stg.finance_targets_cells",
                    ["source_file", "sheet_name", "excel_row", "column_letter", "header_text", "cell_value",
                     "cell_type", "load_date", "source_system"], rows)
-    # Đơn vị đếm là dòng dữ liệu Excel; số ô ghi được đưa vào message.
+    # The unit counted is an Excel data row; the number of cells written goes into the message.
     result.rows_written = len({(r[1], r[2]) for r in rows})
-    result.message = f"{len(rows)} ô; " + "; ".join(skipped)
+    result.message = f"{len(rows)} cells; " + "; ".join(skipped)
 
 
 def load_tickets_csv(dw, load_date: dt.datetime, result: StepResult) -> None:
@@ -144,8 +144,8 @@ def load_tickets_csv(dw, load_date: dt.datetime, result: StepResult) -> None:
         reader = csv.reader(f)
         header = next(reader)
         if header != TICKET_COLUMNS:
-            raise ValueError(f"Cấu trúc CSV thay đổi: {header}")
-        # Giữ chuỗi rỗng như trong file; quyết định rỗng = NULL là việc của tầng clean.
+            raise ValueError(f"CSV structure changed: {header}")
+        # Keep empty strings as in the file; deciding that empty = NULL is the clean layer's job.
         rows = [(config.TICKETS_CSV.name, line_no, *values, load_date, "TICKET_CSV")
                 for line_no, values in enumerate(reader, start=2)]
     result.rows_read = len(rows)

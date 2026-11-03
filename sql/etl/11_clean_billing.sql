@@ -1,4 +1,4 @@
-/* stg -> clean cho Billing: invoices, payments. Chạy sau CRM vì cần đối chiếu khoá với clean.customers/contracts. */
+/* stg -> clean for Billing: invoices, payments. Runs after CRM because it checks keys against clean.customers/contracts. */
 
 CREATE OR ALTER PROCEDURE clean.usp_load_invoices @batch_id UNIQUEIDENTIFIER
 AS
@@ -24,27 +24,27 @@ BEGIN
         SET @read = @@ROWCOUNT;
         CREATE CLUSTERED INDEX ix_tmp_i ON #i (customer_id, billing_month);
 
-        UPDATE #i SET reject_reason = 'MISSING_KEY', reject_detail = N'invoice_id hoặc customer_id rỗng'
+        UPDATE #i SET reject_reason = 'MISSING_KEY', reject_detail = N'invoice_id or customer_id is empty'
         WHERE NULLIF(invoice_id, N'') IS NULL OR NULLIF(customer_id, N'') IS NULL;
 
         WITH ranked AS (
             SELECT reject_reason, reject_detail, ROW_NUMBER() OVER (PARTITION BY invoice_id ORDER BY stg_row_id) AS rn
             FROM #i WHERE reject_reason IS NULL
         )
-        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Trùng invoice_id' WHERE rn > 1;
+        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Duplicate invoice_id' WHERE rn > 1;
 
-        -- Billing và CRM là hai hệ thống không có khoá ngoại; hoá đơn của khách không có trong CRM
-        -- (tài khoản test, khách bị xoá) không gán được cho ai nên không thể vào kho.
-        UPDATE i SET reject_reason = 'ORPHAN_CUSTOMER', reject_detail = CONCAT(N'customer_id ', i.customer_id, N' không có trong CRM')
+        -- Billing and CRM are two systems without a foreign key; an invoice for a customer missing from CRM
+        -- (test account, deleted customer) cannot be assigned to anyone, so it cannot enter the warehouse.
+        UPDATE i SET reject_reason = 'ORPHAN_CUSTOMER', reject_detail = CONCAT(N'customer_id ', i.customer_id, N' not found in CRM')
         FROM #i i
         WHERE i.reject_reason IS NULL AND NOT EXISTS (SELECT 1 FROM clean.customers c WHERE c.customer_id = i.customer_id);
 
-        UPDATE #i SET reject_reason = 'INVALID_DATE', reject_detail = N'billing_month không phải ngày đầu tháng hoặc due_date < invoice_date'
+        UPDATE #i SET reject_reason = 'INVALID_DATE', reject_detail = N'billing_month is not the first of the month, or due_date < invoice_date'
         WHERE reject_reason IS NULL
           AND (billing_month IS NULL OR DAY(billing_month) <> 1 OR invoice_date IS NULL OR due_date < invoice_date);
 
         UPDATE i SET reject_reason = 'OUTSIDE_CONTRACT_PERIOD',
-                     reject_detail = N'Kỳ cước nằm ngoài vòng đời hợp đồng trong CRM (hoặc khách không có hợp đồng hợp lệ)'
+                     reject_detail = N'Billing period outside the CRM contract lifetime (or customer has no valid contract)'
         FROM #i i
         LEFT JOIN clean.contracts k ON k.customer_id = i.customer_id
         WHERE i.reject_reason IS NULL
@@ -55,14 +55,14 @@ BEGIN
                    ROW_NUMBER() OVER (PARTITION BY customer_id, billing_month ORDER BY stg_row_id) AS rn
             FROM #i WHERE reject_reason IS NULL
         )
-        UPDATE ranked SET reject_reason = 'DUPLICATE_PERIOD', reject_detail = N'Khách có nhiều hoá đơn trong cùng kỳ' WHERE rn > 1;
+        UPDATE ranked SET reject_reason = 'DUPLICATE_PERIOD', reject_detail = N'Customer has several invoices in the same period' WHERE rn > 1;
 
         /*
-          Sửa số tiền thay vì loại, vì hoá đơn vẫn có thật (khách vẫn dùng dịch vụ tháng đó):
-          - Âm: hệ thống không có hoá đơn âm (giảm trừ đi qua chứng từ khác) nên coi là nhập nhầm dấu.
-          - NULL: lấy từ tổng thanh toán của chính hoá đơn đó (billing lưu số tiền thanh toán chính xác).
-          - NULL và chưa thanh toán: ước lượng bằng hoá đơn liền trước của khách, rồi liền sau,
-            cuối cùng là giá gói hiện tại trong CRM. Mỗi cách đều được ghi lại ở amount_source.
+          Fix the amount instead of rejecting, because the invoice is real (the customer used the service that month):
+          - Negative: the system has no negative invoices (credits use other documents), so it is a sign entry error.
+          - NULL: take the total paid against that invoice (billing stores the exact payment amount).
+          - NULL and unpaid: estimate from the customer's previous invoice, then the next one,
+            and finally the current plan price in CRM. Each method is recorded in amount_source.
         */
         WITH pay AS (
             SELECT LTRIM(RTRIM(invoice_id)) AS invoice_id, SUM(amount_usd) AS amount
@@ -151,29 +151,29 @@ BEGIN
         FROM stg.billing_payments s;
         SET @read = @@ROWCOUNT;
 
-        UPDATE #p SET reject_reason = 'MISSING_KEY', reject_detail = N'payment_id hoặc invoice_id rỗng'
+        UPDATE #p SET reject_reason = 'MISSING_KEY', reject_detail = N'payment_id or invoice_id is empty'
         WHERE NULLIF(payment_id, N'') IS NULL OR NULLIF(invoice_id, N'') IS NULL;
 
         WITH ranked AS (
             SELECT reject_reason, reject_detail, ROW_NUMBER() OVER (PARTITION BY payment_id ORDER BY stg_row_id) AS rn
             FROM #p WHERE reject_reason IS NULL
         )
-        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Trùng payment_id' WHERE rn > 1;
+        UPDATE ranked SET reject_reason = 'DUPLICATE_KEY', reject_detail = N'Duplicate payment_id' WHERE rn > 1;
 
-        -- Thanh toán đi theo hoá đơn: hoá đơn đã bị loại thì thanh toán cũng bị loại, kèm lý do gốc.
+        -- Payments follow their invoice: if the invoice was rejected, the payment is rejected too, with the original reason.
         UPDATE p SET reject_reason = 'ORPHAN_INVOICE',
-                     reject_detail = COALESCE(N'Hoá đơn đã bị loại ở bước invoices: ' + r.reason_code,
-                                              N'invoice_id không có trong billing')
+                     reject_detail = COALESCE(N'Invoice was rejected at the invoices step: ' + r.reason_code,
+                                              N'invoice_id not found in billing')
         FROM #p p
         OUTER APPLY (SELECT TOP (1) reason_code FROM clean.rejected_records
                      WHERE source_table = N'stg.billing_invoices' AND business_key = p.invoice_id) r
         WHERE p.reject_reason IS NULL AND NOT EXISTS (SELECT 1 FROM clean.invoices i WHERE i.invoice_id = p.invoice_id);
 
-        UPDATE p SET reject_reason = 'CUSTOMER_MISMATCH', reject_detail = N'customer_id của thanh toán khác với hoá đơn'
+        UPDATE p SET reject_reason = 'CUSTOMER_MISMATCH', reject_detail = N'Payment customer_id differs from the invoice'
         FROM #p p JOIN clean.invoices i ON i.invoice_id = p.invoice_id
         WHERE p.reject_reason IS NULL AND p.customer_id <> i.customer_id;
 
-        UPDATE #p SET reject_reason = 'INVALID_VALUE', reject_detail = N'Số tiền <= 0, thiếu ngày hoặc phương thức không hợp lệ'
+        UPDATE #p SET reject_reason = 'INVALID_VALUE', reject_detail = N'Amount <= 0, missing date or invalid payment method'
         WHERE reject_reason IS NULL
           AND (amount_usd IS NULL OR amount_usd <= 0 OR payment_date IS NULL OR payment_method IS NULL);
 

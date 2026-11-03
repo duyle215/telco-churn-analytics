@@ -1,11 +1,11 @@
 /*
-  TelcoDW: schema theo tầng và bảng log ETL.
+  TelcoDW: one schema per layer, plus the ETL log table.
 
-  stg   : bản sao nguyên trạng của nguồn, nạp lại toàn bộ mỗi lần chạy (không làm sạch).
-  clean : dữ liệu đã chuẩn hoá kiểu, loại trùng, đối chiếu khoá; bản ghi lỗi tách ra rejected_records.
-  mart  : star schema phục vụ phân tích và Power BI.
+  stg   : as-is copy of the sources, fully reloaded on every run (no cleaning).
+  clean : typed, de-duplicated, key-checked data; unusable rows go to rejected_records.
+  mart  : star schema for analysis and Power BI.
 
-  Script idempotent: chạy lại không xoá lịch sử etl_log.
+  Idempotent script: re-running it keeps the etl_log history.
 */
 IF SCHEMA_ID('stg') IS NULL EXEC('CREATE SCHEMA stg');
 GO
@@ -17,7 +17,7 @@ GO
 IF OBJECT_ID('dbo.etl_log') IS NULL
 CREATE TABLE dbo.etl_log (
     log_id        BIGINT IDENTITY(1,1) PRIMARY KEY,
-    batch_id      UNIQUEIDENTIFIER NOT NULL,   -- gom các bước của cùng một lần chạy pipeline
+    batch_id      UNIQUEIDENTIFIER NOT NULL,   -- groups the steps of one pipeline run
     layer         VARCHAR(10)      NOT NULL,   -- stg / clean / mart / dq
     step_name     NVARCHAR(100)    NOT NULL,
     object_name   NVARCHAR(128)    NULL,
@@ -31,7 +31,7 @@ CREATE TABLE dbo.etl_log (
 );
 GO
 
-/* Tham số nghiệp vụ dùng chung cho các stored procedure; giá trị được đồng bộ từ src/config.py mỗi lần chạy. */
+/* Business parameters shared by the stored procedures; synced from src/config.py on every run. */
 IF OBJECT_ID('dbo.etl_config') IS NULL
 CREATE TABLE dbo.etl_config (
     config_key   VARCHAR(50)    NOT NULL PRIMARY KEY,

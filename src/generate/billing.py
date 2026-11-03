@@ -1,14 +1,14 @@
-"""Sinh hoá đơn và thanh toán "chuẩn" (chưa cài lỗi) từ dòng thời gian khách hàng."""
+"""Generate "clean" invoices and payments (before error injection) from the customer timeline."""
 import numpy as np
 import pandas as pd
 
 from src import config
 
-# Khoảng dao động cước theo mức sử dụng mỗi tháng (gọi vượt gói, phí phát sinh...).
+# Monthly usage variation of the charge (overage, extra fees...).
 USAGE_NOISE_SD = 0.02
 PAYMENT_TERM_DAYS = 15
 
-# Thanh toán tự động gần như không trễ; trả tay (check) trễ nhiều hơn.
+# Automatic payment is almost never late; manual payment (check) is late more often.
 BASE_LATE_PROBABILITY = {
     "Electronic check": 0.12,
     "Mailed check": 0.10,
@@ -16,8 +16,8 @@ BASE_LATE_PROBABILITY = {
     "Credit card (automatic)": 0.03,
 }
 CHURNER_LATE_MULTIPLIER = 2.0
-# Trễ hạn tăng vọt trong 3 tháng cuối trước khi rời đi: tín hiệu cảnh báo sớm mà
-# phần phân tích có thể tìm thấy.
+# Late payments jump in the last 3 months before leaving: an early-warning signal
+# the analysis can find. It is simulated, so it is not reported as a finding.
 PRE_CHURN_LATE_MULTIPLIER = 4.0
 PRE_CHURN_WINDOW_MONTHS = 3
 MAX_LATE_PROBABILITY = 0.85
@@ -70,7 +70,7 @@ def build_payments(invoices: pd.DataFrame, rng: np.random.Generator) -> pd.DataF
         "payment_method": inv["payment_method"],
     })
 
-    # Khách rời đi thường bỏ ngang hoá đơn cuối; hoá đơn có hạn trả sau snapshot thì đương nhiên chưa có thanh toán.
+    # Leaving customers often skip their final invoice; invoices due after the snapshot naturally have no payment yet.
     final_unpaid = (inv["is_churned"] & (inv["months_to_last"] == 0)
                     & (rng.random(len(inv)) < UNPAID_FINAL_INVOICE_PROBABILITY))
     pay = pay[~final_unpaid & (pay["payment_date"] <= config.SNAPSHOT_DATE)]

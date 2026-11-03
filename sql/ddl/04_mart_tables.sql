@@ -1,10 +1,10 @@
 /*
-  Tầng mart: star schema cho phân tích và Power BI.
+  Mart layer: star schema for analysis and Power BI.
 
-  - Dimension nạp bằng MERGE (SCD type 1): surrogate key giữ ổn định qua các lần chạy,
-    nên báo cáo/bookmark trỏ theo key không bị lệch.
-  - Fact nạp lại toàn bộ (TRUNCATE + INSERT): dữ liệu nhỏ, đơn giản và chắc chắn hơn incremental.
-  - Có khoá ngoại fact -> dim để database tự chặn dòng fact mồ côi.
+  - Dimensions load with MERGE (SCD type 1): surrogate keys stay stable across runs,
+    so reports and bookmarks that point at a key do not drift.
+  - Facts are fully reloaded (TRUNCATE + INSERT): the data is small, and this is simpler and safer than incremental.
+  - Foreign keys fact -> dim let the database block orphan fact rows.
 */
 DROP TABLE IF EXISTS mart.customer_factor;
 DROP TABLE IF EXISTS mart.dim_factor;
@@ -31,17 +31,17 @@ CREATE TABLE mart.dim_date (
     month_name          VARCHAR(10)  NOT NULL,
     month_short         CHAR(3)      NOT NULL,
     year_month          CHAR(7)      NOT NULL,               -- 2025-03
-    year_month_key      INT          NOT NULL,               -- 202503, dùng để sắp xếp year_month
+    year_month_key      INT          NOT NULL,               -- 202503, used to sort year_month
     month_start_date    DATE         NOT NULL,
     month_end_date      DATE         NOT NULL,
-    month_index         INT          NOT NULL,               -- số tháng kể từ tháng đầu của lịch
+    month_index         INT          NOT NULL,               -- months since the first month of the calendar
     day_of_month        TINYINT      NOT NULL,
-    day_of_week         TINYINT      NOT NULL,               -- 1 = Thứ hai
+    day_of_week         TINYINT      NOT NULL,               -- 1 = Monday
     day_name            VARCHAR(10)  NOT NULL,
     iso_week            TINYINT      NOT NULL,
     is_weekend          BIT          NOT NULL,
     is_month_start      BIT          NOT NULL,
-    is_analysis_window  BIT          NOT NULL,               -- 2024-01..2025-12: chỉ ở đây churn mới có ý nghĩa
+    is_analysis_window  BIT          NOT NULL,               -- 2024-01..2025-12: churn is only meaningful here
     is_snapshot_month   BIT          NOT NULL
 );
 
@@ -81,7 +81,7 @@ CREATE TABLE mart.dim_payment_method (
     is_automatic        BIT          NOT NULL
 );
 
-/* Junk dimension: mỗi dòng là một tổ hợp dịch vụ khác nhau, tránh nhồi 9 cột dịch vụ vào fact. */
+/* Junk dimension: one row per distinct service combination, so the fact does not carry 9 service columns. */
 CREATE TABLE mart.dim_service (
     service_key         INT IDENTITY(1,1) PRIMARY KEY,
     phone_service       NVARCHAR(30) NOT NULL,
@@ -93,21 +93,21 @@ CREATE TABLE mart.dim_service (
     tech_support        NVARCHAR(30) NOT NULL,
     streaming_tv        NVARCHAR(30) NOT NULL,
     streaming_movies    NVARCHAR(30) NOT NULL,
-    addon_count         TINYINT      NOT NULL,   -- số dịch vụ internet đi kèm đang dùng (0..6)
+    addon_count         TINYINT      NOT NULL,   -- number of internet add-on services in use (0..6)
     has_streaming       NVARCHAR(3)  NOT NULL,
     internet_sort       TINYINT      NOT NULL,
     CONSTRAINT uq_dim_service UNIQUE (phone_service, multiple_lines, internet_service, online_security, online_backup,
                                       device_protection, tech_support, streaming_tv, streaming_movies)
 );
 
-/* Grain: 1 khách x 1 tháng có tính cước. */
+/* Grain: 1 customer x 1 billed month. */
 CREATE TABLE mart.fact_billing (
     customer_key        INT           NOT NULL REFERENCES mart.dim_customer (customer_key),
-    date_key            INT           NOT NULL REFERENCES mart.dim_date (date_key),  -- ngày đầu tháng
+    date_key            INT           NOT NULL REFERENCES mart.dim_date (date_key),  -- first day of the month
     contract_key        INT           NOT NULL REFERENCES mart.dim_contract (contract_key),
     service_key         INT           NOT NULL REFERENCES mart.dim_service (service_key),
     payment_method_key  INT           NOT NULL REFERENCES mart.dim_payment_method (payment_method_key),
-    invoice_id          NVARCHAR(30)  NULL,      -- NULL khi tháng không có hoá đơn (sự cố billing)
+    invoice_id          NVARCHAR(30)  NULL,      -- NULL when the month has no invoice (billing outage)
     tenure_month_no     SMALLINT      NOT NULL,
     amount_usd          DECIMAL(10,2) NOT NULL,
     usd_vnd_rate        DECIMAL(18,4) NOT NULL,
@@ -116,7 +116,7 @@ CREATE TABLE mart.fact_billing (
     is_imputed          BIT           NOT NULL,
     is_first_month      BIT           NOT NULL,
     is_churn_month      BIT           NOT NULL,
-    is_paid             BIT           NULL,      -- NULL khi không có hoá đơn để đối chiếu
+    is_paid             BIT           NULL,      -- NULL when there is no invoice to check against
     paid_amount_usd     DECIMAL(10,2) NULL,
     payment_date        DATE          NULL,
     days_after_due      INT           NULL,
@@ -145,7 +145,7 @@ CREATE TABLE mart.fact_tickets (
     is_within_90d_before_churn  BIT           NOT NULL
 );
 
-/* Grain: 1 tháng. */
+/* Grain: 1 month. */
 CREATE TABLE mart.fact_target (
     date_key           INT           NOT NULL PRIMARY KEY REFERENCES mart.dim_date (date_key),
     churn_rate_target  DECIMAL(9,6)  NOT NULL,
@@ -153,7 +153,7 @@ CREATE TABLE mart.fact_target (
     note               NVARCHAR(400) NULL
 );
 
-/* Kết quả kiểm tra chất lượng dữ liệu theo từng batch, nguồn cho trang Data Quality. */
+/* Data quality results per batch, source of the Data Quality page. */
 CREATE TABLE mart.dq_check_results (
     dq_id           BIGINT IDENTITY(1,1) PRIMARY KEY,
     batch_id        UNIQUEIDENTIFIER NOT NULL,
@@ -161,8 +161,8 @@ CREATE TABLE mart.dq_check_results (
     check_group     NVARCHAR(50)     NOT NULL,
     check_name      NVARCHAR(200)    NOT NULL,
     object_name     NVARCHAR(200)    NULL,
-    value_before    DECIMAL(18,2)    NULL,   -- đo trên stg
-    value_after     DECIMAL(18,2)    NULL,   -- đo trên clean/mart
+    value_before    DECIMAL(18,2)    NULL,   -- measured on stg
+    value_after     DECIMAL(18,2)    NULL,   -- measured on clean/mart
     value_rejected  DECIMAL(18,2)    NULL,
     expected_rule   NVARCHAR(300)    NULL,
     status          VARCHAR(10)      NOT NULL CHECK (status IN ('PASS', 'WARN', 'FAIL')),
@@ -171,9 +171,9 @@ CREATE TABLE mart.dq_check_results (
 );
 
 /*
-  Grain: 1 khách có tính cước, chụp tại snapshot (hồ sơ hiện tại + hành vi tổng hợp).
-  Bản vật lý hoá của mart.v_customer_profile: view đó phải gom 228 nghìn dòng fact mỗi lần đọc (~2-3 giây),
-  trong khi trang Khám phá truy vấn lại mỗi khi người dùng bật/tắt bộ lọc. Nạp lại cuối mỗi batch ETL.
+  Grain: 1 billed customer at the snapshot (current profile + aggregated behaviour).
+  Materialised copy of mart.v_customer_profile: that view aggregates 228 thousand fact rows on every read (~2-3 s),
+  while the Explore page queries again every time a filter changes. Reloaded at the end of each ETL batch.
 */
 CREATE TABLE mart.customer_snapshot (
     customer_key            INT           NOT NULL PRIMARY KEY REFERENCES mart.dim_customer (customer_key),
@@ -217,9 +217,9 @@ CREATE TABLE mart.customer_snapshot (
 );
 
 /*
-  Phục vụ lọc động trên trang Khám phá (bridge/EAV): 1 dòng = 1 khách x 1 yếu tố, kèm giá trị của khách ở yếu tố đó.
-  Nhờ vậy bộ lọc tuỳ ý (nhiều yếu tố, nhiều giá trị) chỉ là một phép join với bảng bộ lọc,
-  không phải sinh SQL động theo từng tổ hợp cột.
+  Supports dynamic filtering on the Explore page (bridge/EAV): 1 row = 1 customer x 1 factor, with the customer's value.
+  Any filter (several factors, several values) is then a single join with the filter table,
+  instead of generating dynamic SQL for each column combination.
 */
 CREATE TABLE mart.dim_factor (
     factor_key    VARCHAR(30)   NOT NULL PRIMARY KEY,
@@ -236,14 +236,14 @@ CREATE TABLE mart.customer_factor (
 );
 
 /*
-  Columnstore cho bảng fact: các truy vấn phân tích chỉ đọc vài cột nhưng gom trên toàn bảng,
-  columnstore nén theo cột và cho phép batch mode nên nhanh hơn nhiều so với quét theo dòng.
+  Columnstore on the fact tables: analytical queries read few columns but aggregate the whole table;
+  columnstore compresses by column and enables batch mode, which is much faster than row-by-row scans.
 */
 CREATE NONCLUSTERED COLUMNSTORE INDEX ncci_fact_billing
     ON mart.fact_billing (customer_key, date_key, is_churn_month, is_first_month, amount_usd);
 CREATE NONCLUSTERED COLUMNSTORE INDEX ncci_fact_tickets
     ON mart.fact_tickets (customer_key, created_date_key, category);
--- Bảng cầu nối 91 nghìn dòng được join + gom nhóm mỗi lần người dùng đổi bộ lọc; batch mode
--- giảm bước tính tác động từng yếu tố từ ~260 ms xuống ~35 ms (đo bằng sys.dm_exec_query_stats).
+-- The 91-thousand-row bridge table is joined and grouped on every filter change; batch mode
+-- cut the per-factor impact step from ~260 ms to ~35 ms (measured with sys.dm_exec_query_stats).
 CREATE NONCLUSTERED COLUMNSTORE INDEX ncci_customer_factor
     ON mart.customer_factor (customer_key, factor_key, value, value_sort);
