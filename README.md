@@ -2,12 +2,12 @@
 
 Dự án portfolio Data Analyst: dựng một pipeline phân tích churn khách hàng viễn thông hoàn chỉnh trên **SQL Server**.
 Dữ liệu đi từ 4 loại nguồn (CRM, Billing, file Excel/CSV, API), qua ETL bằng **stored procedure** vào **star schema**,
-được kiểm tra chất lượng tự động, rồi lên **dashboard web** 5 trang.
+được kiểm tra chất lượng tự động, rồi lên **dashboard web tương tác**: bật/tắt yếu tố để xem tác động lên churn và doanh thu.
 
 Nền dữ liệu: [IBM Telco Customer Churn](https://www.kaggle.com/datasets/blastchar/telco-customer-churn)
 (7.043 khách, 21 cột). Mọi con số trong README đều lấy từ truy vấn chạy thật trên pipeline này.
 
-![Finance Overview](docs/images/dashboard_overview.png)
+![Khám phá churn](docs/images/dashboard_explore.png)
 
 ## Câu hỏi kinh doanh
 
@@ -39,7 +39,7 @@ flowchart LR
     A & B & C & D & E -->|Python load_staging| S
     S -->|stored procedure| CL --> M
     CL & M -.-> L
-    M -->|Flask API| W[Dashboard web 5 trang]
+    M -->|stored procedure + Flask API| W[Dashboard web]
 ```
 
 | Tầng | Vai trò | Cách nạp |
@@ -131,17 +131,23 @@ Cần thử nghiệm A/B có nhóm đối chứng trước khi triển khai rộ
 
 ## Dashboard
 
-Web app Flask + ECharts thay cho Power BI. Dashboard đọc trực tiếp các view trong `mart` và tự cập nhật sau mỗi lần ETL.
-Có 5 trang: **Finance Overview**, **Churn Drivers**, **Risk Segments** (drill-through tới danh sách khách, xuất CSV),
-**What-if Scenario** (thanh trượt tham số) và **Data Quality**. Thiết kế từng trang: [docs/03_dashboard_spec.md](docs/03_dashboard_spec.md).
+Web app Flask + ECharts thay cho Power BI, gồm 3 trang:
 
-| Risk Segments: drill-through | What-if Scenario | Data Quality |
-|---|---|---|
-| ![](docs/images/dashboard_risk_drillthrough.png) | ![](docs/images/dashboard_whatif.png) | ![](docs/images/dashboard_quality.png) |
+- **Khám phá churn:** bật/tắt 13 yếu tố (một hay nhiều cùng lúc) hoặc chọn góc nhìn có sẵn. Mọi KPI, xu hướng, retention, bảng "yếu tố nào tạo khác biệt lớn nhất" và danh sách khách (xuất CSV) tính lại ngay theo nhóm đang chọn, luôn so với toàn công ty, kèm insight viết bằng câu thường.
+- **What-if Scenario:** thanh trượt tỷ lệ chuyển hợp đồng, chiết khấu, tầm nhìn.
+- **Data Quality:** 26 kiểm tra, bản ghi bị loại, các bước ETL.
+
+**Hiệu năng:** mỗi lần đổi bộ lọc chỉ gọi 1 stored procedure (1 round-trip, không N+1), bộ lọc truyền dạng JSON (không SQL động).
+Kỹ thuật dùng: bảng cầu nối khách × yếu tố, columnstore index, cache theo batch ETL. Kết quả: ~290 ms cho bộ lọc mới, ~2 ms khi trúng cache.
+Chi tiết: [docs/03_dashboard_spec.md](docs/03_dashboard_spec.md).
+
+| What-if Scenario | Data Quality |
+|---|---|
+| ![](docs/images/dashboard_whatif.png) | ![](docs/images/dashboard_quality.png) |
 
 ## Chạy lại từ đầu
 
-**Yêu cầu:** Windows, SQL Server (Developer/Express) chạy local với Windows Authentication, ODBC Driver 17 for SQL Server, Python 3.11+, kết nối Internet (gọi API tỷ giá).
+**Yêu cầu:** Windows, SQL Server (Developer/Express; columnstore cần bản 2016 SP1 trở lên) chạy local với Windows Authentication, ODBC Driver 17 for SQL Server, Python 3.11+, kết nối Internet (gọi API tỷ giá).
 
 ```bash
 pip install -r requirements.txt
@@ -168,7 +174,8 @@ sql/
   ddl/                schema stg/clean/mart, etl_log, hệ thống nguồn
   etl/                stored procedure stg -> clean -> mart
   quality/            dbo.usp_run_dq_checks
-  views/              view phân tích cho dashboard
+  views/              view phân tích
+  serving/            stored procedure cho trang Khám phá (lọc động)
   analysis/           7 câu hỏi phân tích, mỗi file có insight
 docs/                 tài liệu từng giai đoạn, ảnh dashboard
 ```

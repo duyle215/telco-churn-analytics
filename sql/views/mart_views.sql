@@ -31,7 +31,7 @@ WITH ranked AS (
     FROM mart.fact_tickets GROUP BY customer_key
 )
 SELECT c.customer_key, c.customer_id, c.gender, c.senior_citizen, c.partner, c.dependents,
-       c.signup_month, c.tenure_months, c.tenure_group, c.tenure_group_order, c.customer_status, c.churn_month,
+       c.signup_month, c.first_billing_month, c.tenure_months, c.tenure_group, c.tenure_group_order, c.customer_status, c.churn_month,
        CASE WHEN c.customer_status = N'Churned' THEN 1 ELSE 0 END AS is_churned,
        ct.contract_type, ct.contract_sort, ct.paperless_billing,
        s.internet_service, s.phone_service, s.tech_support, s.online_security, s.online_backup,

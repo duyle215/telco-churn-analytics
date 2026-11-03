@@ -12,7 +12,9 @@ import argparse
 from src import config, db
 
 DDL_REBUILD_FILES = ["03_clean_tables.sql", "04_mart_tables.sql"]
-CODE_DIRS = ["etl", "quality", "views"]
+# Thứ tự deploy: hàm tiện ích trước (view cần), rồi view (proc nạp snapshot đọc cột của view lúc biên dịch),
+# cuối cùng là các proc ETL và data quality.
+CODE_ORDER = ["etl/00_helpers.sql", "views/*.sql", "etl/[1-9]*.sql", "quality/*.sql", "serving/*.sql"]
 
 
 def sync_config(conn) -> None:
@@ -38,8 +40,8 @@ def deploy(rebuild: bool) -> None:
         if rebuild or tables_missing:
             for name in DDL_REBUILD_FILES:
                 db.run_sql_file(conn, config.SQL_DIR / "ddl" / name)
-        for folder in CODE_DIRS:
-            for path in sorted((config.SQL_DIR / folder).glob("*.sql")):
+        for pattern in CODE_ORDER:
+            for path in sorted(config.SQL_DIR.glob(pattern)):
                 db.run_sql_file(conn, path)
         sync_config(conn)
 

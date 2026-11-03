@@ -182,3 +182,80 @@ BEGIN
     END CATCH
 END
 GO
+
+/* Vật lý hoá mart.v_customer_profile cho trang Khám phá; phải chạy sau khi các fact đã nạp xong. */
+CREATE OR ALTER PROCEDURE mart.usp_load_customer_snapshot @batch_id UNIQUEIDENTIFIER
+AS
+BEGIN
+    SET NOCOUNT ON; SET XACT_ABORT ON;
+    DECLARE @log_id BIGINT, @expected INT, @written INT, @msg NVARCHAR(4000);
+    EXEC dbo.usp_etl_log_start @batch_id, 'mart', N'mart.usp_load_customer_snapshot', N'mart.customer_snapshot', NULL, @log_id OUTPUT;
+    BEGIN TRY
+        SET @expected = (SELECT COUNT(DISTINCT customer_key) FROM mart.fact_billing);
+        BEGIN TRAN;
+            DELETE FROM mart.customer_factor;
+            DELETE FROM mart.customer_snapshot;
+            INSERT INTO mart.customer_snapshot WITH (TABLOCK)
+               (customer_key, customer_id, gender, senior_citizen, partner, dependents, signup_month, first_billing_month,
+                tenure_months, tenure_group, tenure_group_order, customer_status, churn_month, is_churned, contract_type,
+                contract_sort, paperless_billing, internet_service, phone_service, tech_support, online_security,
+                online_backup, device_protection, addon_count, has_streaming, payment_method, payment_type, risk_segment,
+                last_billed_amount_usd, current_mrr_usd, billed_months, window_months, lifetime_revenue_usd,
+                late_payment_rate, tickets, billing_tickets, technical_tickets, in_analysis_window)
+            SELECT customer_key, customer_id, gender, senior_citizen, partner, dependents, signup_month, first_billing_month,
+                tenure_months, tenure_group, tenure_group_order, customer_status, churn_month, is_churned, contract_type,
+                contract_sort, paperless_billing, internet_service, phone_service, tech_support, online_security,
+                online_backup, device_protection, addon_count, has_streaming, payment_method, payment_type, risk_segment,
+                last_billed_amount_usd, current_mrr_usd, billed_months, window_months, lifetime_revenue_usd,
+                late_payment_rate, tickets, billing_tickets, technical_tickets, in_analysis_window
+            FROM mart.v_customer_profile;
+            SET @written = @@ROWCOUNT;
+            IF @written <> @expected THROW 50013, N'customer_snapshot: số khách khác số khách có trong fact_billing', 1;
+
+            -- Danh mục yếu tố: thêm/bớt yếu tố cho trang Khám phá chỉ cần sửa hai danh sách VALUES dưới đây.
+            MERGE mart.dim_factor AS t
+            USING (VALUES
+                ('contract', N'Loại hợp đồng', 1), ('tenure', N'Thời gian gắn bó', 2), ('internet', N'Loại internet', 3),
+                ('addons', N'Số dịch vụ đi kèm', 4), ('tech_support', N'Hỗ trợ kỹ thuật', 5),
+                ('online_security', N'Bảo mật online', 6), ('payment_type', N'Hình thức thanh toán', 7),
+                ('payment_method', N'Phương thức thanh toán', 8), ('paperless', N'Hoá đơn điện tử', 9),
+                ('senior', N'Người cao tuổi', 10), ('partner', N'Có vợ/chồng', 11),
+                ('dependents', N'Có người phụ thuộc', 12), ('gender', N'Giới tính', 13)
+            ) AS s(factor_key, factor_label, factor_sort) ON t.factor_key = s.factor_key
+            WHEN MATCHED THEN UPDATE SET factor_label = s.factor_label, factor_sort = s.factor_sort
+            WHEN NOT MATCHED BY TARGET THEN INSERT (factor_key, factor_label, factor_sort) VALUES (s.factor_key, s.factor_label, s.factor_sort)
+            WHEN NOT MATCHED BY SOURCE THEN DELETE;
+
+            INSERT INTO mart.customer_factor WITH (TABLOCK) (customer_key, factor_key, value, value_sort)
+            SELECT s.customer_key, v.factor_key, v.value, v.value_sort
+            FROM mart.customer_snapshot s
+            CROSS APPLY (VALUES
+                ('contract', s.contract_type, s.contract_sort),
+                ('tenure', s.tenure_group, s.tenure_group_order),
+                ('internet', s.internet_service, CASE s.internet_service WHEN N'Fiber optic' THEN 1 WHEN N'DSL' THEN 2 ELSE 3 END),
+                -- Khách không dùng internet không thể có dịch vụ đi kèm; gộp họ vào "0 dịch vụ" sẽ kéo
+                -- tỷ lệ rời đi của nhóm này xuống sai lệch, nên tách thành lựa chọn riêng.
+                ('addons', CASE WHEN s.internet_service = N'No' THEN N'No internet service' ELSE CAST(s.addon_count AS NVARCHAR(60)) END,
+                           CASE WHEN s.internet_service = N'No' THEN 99 ELSE s.addon_count END),
+                ('tech_support', s.tech_support, CASE s.tech_support WHEN N'No' THEN 1 WHEN N'Yes' THEN 2 ELSE 3 END),
+                ('online_security', s.online_security, CASE s.online_security WHEN N'No' THEN 1 WHEN N'Yes' THEN 2 ELSE 3 END),
+                ('payment_type', s.payment_type, CASE s.payment_type WHEN N'Manual' THEN 1 ELSE 2 END),
+                ('payment_method', s.payment_method, CASE s.payment_method WHEN N'Electronic check' THEN 1
+                    WHEN N'Mailed check' THEN 2 WHEN N'Bank transfer (automatic)' THEN 3 ELSE 4 END),
+                ('paperless', s.paperless_billing, CASE s.paperless_billing WHEN N'Yes' THEN 1 ELSE 2 END),
+                ('senior', s.senior_citizen, CASE s.senior_citizen WHEN N'Yes' THEN 1 ELSE 2 END),
+                ('partner', s.partner, CASE s.partner WHEN N'Yes' THEN 1 ELSE 2 END),
+                ('dependents', s.dependents, CASE s.dependents WHEN N'Yes' THEN 1 ELSE 2 END),
+                ('gender', s.gender, CASE s.gender WHEN N'Female' THEN 1 ELSE 2 END)
+            ) v(factor_key, value, value_sort);
+        COMMIT;
+        EXEC dbo.usp_etl_log_end @log_id, 'SUCCESS', @expected, @written, NULL;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK;
+        SET @msg = ERROR_MESSAGE();
+        EXEC dbo.usp_etl_log_end @log_id, 'FAILED', @expected, NULL, @msg;
+        THROW;
+    END CATCH
+END
+GO

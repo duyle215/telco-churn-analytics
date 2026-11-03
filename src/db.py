@@ -1,4 +1,6 @@
 """Tiện ích kết nối SQL Server dùng chung cho các bước sinh dữ liệu và nạp DW."""
+import datetime as dt
+import decimal
 import re
 from pathlib import Path
 
@@ -82,4 +84,13 @@ def _to_python(value):
         return value.item()
     if isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
+    return value
+
+
+def to_json_value(value):
+    """Đổi kiểu trả về của pyodbc (Decimal, date) sang kiểu JSON được."""
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    if isinstance(value, (dt.date, dt.datetime)):
+        return value.isoformat()
     return value

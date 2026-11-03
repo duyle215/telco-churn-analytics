@@ -1,102 +1,62 @@
 # Giai đoạn 5: Dashboard
 
-Dashboard web thay cho Power BI (máy phát triển chưa cài Power BI Desktop). Cùng vai trò:
-đọc star schema/view trong `TelcoDW.mart`, không tự tính lại chỉ số.
+Dashboard web thay cho Power BI (máy phát triển chưa cài Power BI Desktop). Nó đọc star schema trong
+`TelcoDW.mart` và không tự tính chỉ số: mọi phép tính nằm trong SQL.
 
 **Chạy:** `python -m src.dashboard.app` rồi mở <http://127.0.0.1:5000>.
 
-## 1. Kiến trúc
+## 1. Ba trang
 
-```
-TelcoDW.mart (view)  ──>  Flask API (src/dashboard/app.py)  ──>  SPA HTML/JS + ECharts (src/dashboard/static)
-```
+| Trang | Cho ai | Làm được gì |
+|---|---|---|
+| **Khám phá churn** | Lãnh đạo, Marketing, CSKH | Bật/tắt 13 yếu tố (hợp đồng, internet, dịch vụ đi kèm, thanh toán, tenure, nhân khẩu học...) hoặc chọn góc nhìn có sẵn; mọi chỉ số, biểu đồ, bảng tác động và danh sách khách tính lại theo nhóm đang chọn |
+| **What-if Scenario** | Lãnh đạo, Marketing | Kéo thanh trượt: tỷ lệ khách chuyển sang hợp đồng 1 năm, chiết khấu, tầm nhìn; xem doanh thu giữ thêm và điểm hoà vốn |
+| **Data Quality** | Data team, người nghi ngờ con số | 26 kiểm tra trước/sau làm sạch, bản ghi bị loại theo lý do, các bước ETL gần nhất |
 
-| Thành phần | Vai trò |
+Ba trang báo cáo tĩnh cũ (Overview, Drivers, Risk) được gộp vào trang Khám phá: mỗi trang tĩnh chỉ là
+một tổ hợp bộ lọc cố định, nay trở thành "góc nhìn có sẵn" (preset) hoặc một cú bấm.
+
+## 2. Trang Khám phá
+
+**Bộ lọc:** cùng một yếu tố chọn nhiều giá trị là HOẶC, khác yếu tố là VÀ. Bộ lọc lưu trên URL
+(`#explore?f=...`), nên gửi link là người khác mở ra đúng góc nhìn đó.
+
+**Góc nhìn có sẵn:** Toàn công ty · Nhóm rủi ro cao (hợp đồng tháng, Fiber, trả tay) · Khách năm đầu ·
+Khách Fiber · Không dùng dịch vụ đi kèm · Hợp đồng dài hạn.
+
+**Nội dung (luôn so với toàn công ty):**
+- **Insight tự sinh bằng câu thường:** quy mô nhóm, tỷ lệ rời đi so với mức chung, yếu tố tạo khác biệt lớn nhất trong nhóm, tháng rời đi nhiều nhất, MRR dự kiến mất. Nhóm dưới 100 khách có cảnh báo mẫu nhỏ.
+- **5 thẻ KPI:** số khách, đã rời đi (24 tháng), rời đi mỗi tháng, MRR hiện tại, MRR dự kiến mất mỗi tháng.
+- **Tỷ lệ rời đi và MRR theo tháng.** Khi xem toàn công ty thì so với chỉ tiêu Finance; khi có bộ lọc thì so với toàn công ty. Có đánh dấu mốc tăng giá Fiber.
+- **"Yếu tố nào tạo khác biệt lớn nhất?"** Với từng yếu tố, chia tiếp nhóm đang chọn theo các giá trị của nó. Yếu tố chênh lệch nhiều nhất đứng đầu. Bấm một dòng là thêm vào bộ lọc. Nhánh dưới 30 khách hiện mờ, không tính vào mức chênh lệch.
+- **Retention theo tháng kể từ khi ký** (chỉ khách bắt đầu từ 12/2023 để tránh thiên lệch sống sót) và **ticket khiếu nại hoá đơn trên 100 khách** (tín hiệu cảnh báo sớm).
+- **Danh sách khách đang hoạt động** trong nhóm: tìm kiếm, sắp xếp, xuất CSV cho đội chăm sóc khách hàng.
+
+## 3. Hiệu năng truy vấn
+
+Mỗi lần đổi bộ lọc chỉ gọi **1 stored procedure, 1 round-trip** (`mart.usp_explore`), không có N+1:
+
+| Kỹ thuật | Vì sao |
 |---|---|
-| `app.py` | Mỗi endpoint `/api/<tên>` trả JSON của một view. Cache theo `batch_id` ETL mới nhất: chạy lại ETL là dashboard tự lấy số mới, không cần khởi động lại |
-| `templates/index.html` | Khung trang: sidebar, topbar có bộ lọc kỳ, drawer drill-through |
-| `static/app.js` | Router theo hash (`#overview`, `#drivers`...), dựng biểu đồ, tiêu đề insight tính từ dữ liệu |
-| `static/app.css` | Token màu sáng/tối; bảng màu biểu đồ đã kiểm định cho người mù màu (CVD) |
+| Stored procedure tĩnh, bộ lọc truyền dạng JSON (`OPENJSON`) | Kế hoạch thực thi biên dịch một lần rồi tái sử dụng; không có SQL động nên không có đường cho SQL injection |
+| Một batch trả 6 result set (KPI, tác động, xu hướng, ticket, retention, mẫu số retention) | Một lượt gọi thay vì nhiều lượt |
+| Nhóm đang chọn và toàn công ty tính trong cùng một lần quét (`SUM(CASE WHEN sel = 1 ...)`) | Không chạy truy vấn thứ hai cho "toàn công ty" |
+| Bảng cầu nối `mart.customer_factor` (khách × yếu tố × giá trị) | Bộ lọc tuỳ ý chỉ là một phép join với bảng bộ lọc; tác động của 13 yếu tố tính trong một lần gom nhóm thay vì 13 truy vấn |
+| `mart.customer_snapshot` (bản vật lý hoá của view hồ sơ khách) | View phải gom 228 nghìn dòng fact mỗi lần đọc (~2-3 giây); bảng snapshot nạp một lần mỗi batch ETL |
+| Columnstore index trên `fact_billing`, `fact_tickets`, `customer_factor` | Batch mode: bước tính tác động từ 260 ms xuống 35 ms |
+| Cache phía server theo batch ETL + bộ lọc | Bộ lọc đã từng xem trả về ngay (~2 ms); chạy lại ETL là cache tự làm mới |
+| Gộp các cú bấm liên tiếp (120 ms) và huỷ request cũ (`AbortController`) | Bấm nhanh nhiều chip không tạo hàng loạt request |
 
-Ánh xạ khái niệm Power BI sang bản web:
+Số đo trên máy phát triển: ~600 ms với SQL động lúc đầu → **~290 ms** sau khi tối ưu (lần đầu một bộ lọc),
+**~2 ms** khi trúng cache. Đo từng câu lệnh bằng `sys.dm_exec_query_stats`.
 
-| Power BI | Bản web |
-|---|---|
-| Data model, quan hệ 1-nhiều | Star schema + view trong `mart` (xem [02_data_warehouse.md](02_data_warehouse.md)) |
-| DAX measure | Cột tính sẵn trong view (`v_kpi_monthly`: churn_rate, arpu_usd, mrr_vs_target_pct, mrr_mom_pct...) |
-| Slicer | Bộ lọc kỳ (24 tháng / 2024 / 2025) trên trang Overview |
-| Drill-through | Bấm phân khúc → drawer danh sách khách, tìm kiếm, sắp xếp, xuất CSV |
-| What-if parameter | Thanh trượt tỷ lệ chuyển đổi, chiết khấu, tầm nhìn |
-| Theme JSON | Biến CSS trong `app.css` (sáng/tối) |
+**Kiểm chứng tính đúng:** bộ lọc "hợp đồng tháng + Fiber + trả tay" cho ra 1.508 khách, churn 5,46%/tháng,
+MRR $53.883, MRR dự kiến mất $2.941, khớp phân khúc rủi ro trong
+[06_risk_segments.sql](../sql/analysis/06_risk_segments.sql). Không lọc thì số theo tháng khớp
+`mart.v_kpi_monthly` (ví dụ 2025-04: 4.814 khách, 149 rời đi).
 
-## 2. Thiết kế từng trang
+## 4. Quy tắc trình bày
 
-Tiêu đề biểu đồ và khung insight được **tính từ dữ liệu** (không viết cứng). Khi số thay đổi thì câu chữ đổi theo.
-
-### 2.1 Finance Overview
-- **Mục tiêu:** Tháng này có đạt chỉ tiêu churn và MRR không, và churn đang làm mất bao nhiêu doanh thu?
-- **Người xem:** Ban giám đốc, Finance.
-- **Bộ lọc:** kỳ 24 tháng / 2024 / 2025.
-- **Nội dung:**
-  - Khung insight.
-  - 5 thẻ KPI có so sánh: khách cuối kỳ so với đầu kỳ; churn bình quân so với chỉ tiêu; MRR so với chỉ tiêu; MRR mất; ARPU.
-  - MRR so với đường chỉ tiêu, có đánh dấu tháng ước lượng và mốc tăng giá Fiber.
-  - Churn rate dạng cột, cột đỏ là tháng vượt chỉ tiêu.
-  - MRR mất do churn.
-  - Ticket Billing so với dải bình thường ±2σ, đóng vai trò cảnh báo sớm.
-- **Ví dụ tiêu đề:** "Churn vượt chỉ tiêu 19/24 tháng; đỉnh 3,10% vào 2025-04".
-- **Nguồn:** `v_kpi_monthly`, `v_anomaly_monthly`.
-
-### 2.2 Churn Drivers
-- **Mục tiêu:** Yếu tố nào gắn với churn cao, và ảnh hưởng của Fiber có thật hay chỉ do cơ cấu hợp đồng?
-- **Người xem:** Marketing, Product.
-- **Nội dung:**
-  - 9 biểu đồ nhỏ, mỗi biểu đồ một driver, có đường bình quân.
-  - Fiber/DSL/Không internet so trong từng loại hợp đồng.
-  - Đường retention bình quân, chỉ vẽ các mốc có ≥ 6 cohort.
-  - Heatmap cohort.
-- **Ví dụ tiêu đề:** "Fiber churn gấp 1,7–3,7 lần DSL trong cùng loại hợp đồng", "Mất 13,9% khách ngay sau kỳ cước đầu tiên".
-- **Nguồn:** `v_churn_drivers`, `v_churn_internet_by_contract`, `v_cohort_retention`.
-
-### 2.3 Risk Segments
-- **Mục tiêu:** Ưu tiên chăm sóc nhóm khách nào, và cụ thể là những khách nào?
-- **Người xem:** Customer Care, Sales.
-- **Nội dung:**
-  - 5 thẻ KPI.
-  - Biểu đồ bong bóng: trục ngang là tỷ trọng khách, trục dọc là churn so với bình quân, kích thước là MRR.
-  - Top MRR dự kiến mất.
-  - Bảng 18 phân khúc.
-  - **Drill-through:** bấm bong bóng, cột hoặc dòng để mở drawer danh sách khách đang hoạt động (cước, ticket, tỷ lệ trả trễ...), có tìm kiếm, sắp xếp và xuất CSV.
-- **Định nghĩa rủi ro cao:** đồng thời ≥ 5% khách, churn ≥ 1,5 lần bình quân và ≥ 10% MRR.
-- **Nguồn:** `v_risk_segments`, `v_customer_profile`.
-
-### 2.4 What-if Scenario
-- **Mục tiêu:** Chuyển X% khách Month-to-month sang hợp đồng 1 năm thì giữ lại bao nhiêu doanh thu, và chiết khấu tối đa bao nhiêu thì vẫn có lãi?
-- **Người xem:** Ban giám đốc, Marketing.
-- **Tham số:** tỷ lệ chuyển đổi 0–50%, chiết khấu 0–30%, tầm nhìn 6–24 tháng.
-- **Nội dung:**
-  - Hai đường số khách còn lại: theo nhịp churn One year và theo nhịp Month-to-month.
-  - 5 thẻ kết quả, trong đó có điểm hoà vốn.
-  - Bảng số liệu nền.
-- **Kiểm chứng:** công thức trùng [07_whatif_contract.sql](../sql/analysis/07_whatif_contract.sql). Ở mức 20%/12 tháng, cả hai cho cùng kết quả: 444 khách, +$8.404 MRR, $59.162 doanh thu, hoà vốn ở chiết khấu 18,7%.
-- **Nguồn:** `v_whatif_contract_base`.
-
-### 2.5 Data Quality
-- **Mục tiêu:** Số liệu trên dashboard có tin được không? Lần ETL gần nhất ra sao?
-- **Người xem:** Data team, và bất kỳ ai nghi ngờ con số.
-- **Nội dung:**
-  - Thẻ PASS/WARN/FAIL.
-  - Bảng 26 kiểm tra theo nhóm, có giá trị trước (stg) và sau (clean/mart).
-  - Biểu đồ bản ghi bị loại theo lý do.
-  - Các bước ETL với số dòng và thời gian chạy.
-- **Ví dụ tiêu đề:** "24/26 kiểm tra đạt; 2 cảnh báo đã biết, 0 lỗi cần xử lý".
-- **Nguồn:** `v_dq_latest`, `v_rejected_summary`, `dbo.etl_log`.
-
-## 3. Quy tắc trình bày
-
-- Màu gắn với thực thể, không theo thứ hạng: Fiber luôn xanh, DSL cam, không internet xanh ngọc. Đỏ chỉ dùng cho trạng thái xấu (vượt chỉ tiêu, rủi ro cao, bất thường) và luôn đi kèm nhãn.
-- Không dùng biểu đồ hai trục tung: MRR và churn rate nằm ở hai biểu đồ riêng.
-- Mọi biểu đồ có tooltip khi rê chuột. Có ≥ 2 chuỗi dữ liệu thì có chú giải. Giá trị chỉ ghi trên các điểm cần nhấn mạnh.
-- Chế độ tối có bộ màu riêng (không đảo màu tự động), lưu lựa chọn ở trình duyệt.
-- Số định dạng kiểu Việt Nam (1.234,5), USD dùng `$`.
-- Bố cục co giãn: dưới 900px, sidebar thu thành menu và lưới chuyển thành 1 cột.
+- Câu chữ và nhãn tiếng Việt cho người không chuyên ("Theo tháng", "Trả tay", "Đã rời đi (24 tháng)").
+- Màu: xanh là nhóm đang chọn, xám là toàn công ty, nét đứt là chỉ tiêu, đỏ chỉ dùng cho nhánh rời đi cao bất thường (>1,2 lần nhóm) và luôn có nhãn số kèm theo.
+- Không dùng biểu đồ hai trục tung; mọi biểu đồ có tooltip; chế độ sáng/tối có bộ màu riêng; co giãn theo màn hình.

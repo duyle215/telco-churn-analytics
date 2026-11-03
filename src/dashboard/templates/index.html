@@ -28,13 +28,9 @@
     </div>
 
     <nav class="nav" aria-label="Trang">
-      <div class="nav-label">Báo cáo</div>
-      <a href="#overview" data-page="overview">
-        <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-18v6h8V3z"/></svg>Finance Overview</a>
-      <a href="#drivers" data-page="drivers">
-        <svg viewBox="0 0 24 24"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Churn Drivers</a>
-      <a href="#risk" data-page="risk">
-        <svg viewBox="0 0 24 24"><path d="M12 3 2 21h20L12 3zm0 6v5m0 3v.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Risk Segments</a>
+      <div class="nav-label">Phân tích</div>
+      <a href="#explore" data-page="explore">
+        <svg viewBox="0 0 24 24"><path d="M4 5h16l-6 7v6l-4 2v-8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>Khám phá churn</a>
       <a href="#whatif" data-page="whatif">
         <svg viewBox="0 0 24 24"><path d="M4 6h10M4 12h16M4 18h7m5-12v.01M18 18v.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="17" cy="6" r="2.4" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="18" r="2.4" fill="none" stroke="currentColor" stroke-width="2"/></svg>What-if Scenario</a>
       <div class="nav-label">Vận hành</div>
@@ -57,22 +53,13 @@
         <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
       <div class="topbar-titles">
-        <div class="crumb" id="crumb">Báo cáo</div>
-        <h1 id="pageTitle">Finance Overview</h1>
-      </div>
-      <div class="topbar-actions">
-        <div class="segmented" id="periodFilter" role="group" aria-label="Kỳ báo cáo">
-          <button type="button" data-period="all" class="active">24 tháng</button>
-          <button type="button" data-period="2024">2024</button>
-          <button type="button" data-period="2025">2025</button>
-        </div>
+        <div class="crumb" id="crumb">Phân tích</div>
+        <h1 id="pageTitle">Khám phá churn</h1>
       </div>
     </header>
 
     <div class="content" id="content">
-      <section class="page" id="page-overview"></section>
-      <section class="page" id="page-drivers"></section>
-      <section class="page" id="page-risk"></section>
+      <section class="page" id="page-explore"></section>
       <section class="page" id="page-whatif"></section>
       <section class="page" id="page-quality"></section>
     </div>
@@ -83,7 +70,7 @@
 <aside class="drawer" id="drawer" aria-hidden="true">
   <div class="drawer-head">
     <div>
-      <div class="crumb">Drill-through · khách đang hoạt động</div>
+      <div class="crumb">Khách đang hoạt động trong nhóm</div>
       <h2 id="drawerTitle">Phân khúc</h2>
     </div>
     <button class="icon-btn" id="drawerClose" type="button" aria-label="Đóng">

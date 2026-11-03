@@ -25,6 +25,7 @@ BEGIN
     EXEC mart.usp_load_fact_billing @batch_id;
     EXEC mart.usp_load_fact_tickets @batch_id;
     EXEC mart.usp_load_fact_target @batch_id;
+    EXEC mart.usp_load_customer_snapshot @batch_id;
 END
 GO
 

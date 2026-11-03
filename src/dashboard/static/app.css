@@ -1,4 +1,4 @@
-/* Token màu: chart dùng bảng màu đã kiểm định CVD (skill dataviz, references/palette.md). */
+/* Token màu: biểu đồ dùng bảng màu đã kiểm tra độ phân biệt cho người mù màu (CVD), có bộ màu riêng cho giao diện tối. */
 :root {
   color-scheme: light;
   --bg: #f6f6f4;
@@ -226,6 +226,49 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .skeleton { height: 300px; border-radius: 10px; background: linear-gradient(90deg, var(--surface-2), var(--border), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 .error { color: var(--critical); }
+
+/* Trang Khám phá */
+.presets { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 14px; }
+.preset {
+  border: 1px solid var(--border-strong); background: var(--surface); border-radius: 999px; padding: 6px 12px;
+  cursor: pointer; font-weight: 500; display: inline-flex; gap: 6px; align-items: baseline;
+}
+.preset span { font-size: 12px; color: var(--text-3); font-weight: 400; }
+.preset:hover { background: var(--surface-2); }
+.preset.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.preset.on span { color: rgba(255, 255, 255, .8); }
+.factor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px 24px; }
+.factor-label { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  border: 1px solid var(--border-strong); background: var(--surface); border-radius: 8px; padding: 4px 10px;
+  cursor: pointer; font-size: 13px; color: var(--text-2);
+}
+.chip:hover { border-color: var(--accent); color: var(--text); }
+.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.page.loading .card, .page.loading .grid { transition: opacity .15s; }
+.page.loading #exKpis, .page.loading #exImpact, .page.loading .chart { opacity: .55; }
+.impact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.impact { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--surface); }
+.impact.filtered { border-color: var(--accent); }
+.impact-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+.impact-row {
+  width: 100%; display: grid; grid-template-columns: minmax(90px, 1.3fr) 1.4fr 52px 76px 44px; gap: 8px; align-items: center;
+  border: 0; background: none; padding: 5px 6px; border-radius: 6px; cursor: pointer; text-align: left; font-size: 13px;
+}
+.impact-row:hover { background: var(--surface-2); }
+.impact-row.on { background: var(--accent-soft); }
+.impact-row.on .impact-name { color: var(--accent); font-weight: 600; }
+.impact-row.tiny { opacity: .5; }
+.impact-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.impact-bar { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.impact-bar span { display: block; height: 100%; background: var(--series-1); border-radius: 4px; }
+.impact-bar span.hot { background: var(--critical); }
+.impact-val { text-align: right; font-weight: 600; }
+.impact-n { text-align: right; color: var(--text-3); font-size: 12px; }
+.impact-delta { text-align: right; font-size: 12px; color: var(--text-3); }
+.impact-delta.up { color: var(--critical); }
+.impact-delta.down { color: var(--good); }
 
 /* Responsive */
 @media (max-width: 1200px) {

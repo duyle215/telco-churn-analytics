@@ -143,6 +143,11 @@ erDiagram
 | `fact_billing` | 1 khách × 1 tháng có tính cước | (`customer_key`, `date_key`) | 227.990 | Lịch tháng lấy từ hợp đồng CRM (không lấy từ hoá đơn) để tháng sự cố billing không làm "mất" khách. Có `amount_usd`, `amount_vnd`, `is_churn_month`, `is_imputed`, trạng thái thanh toán |
 | `fact_tickets` | 1 ticket | `ticket_id` | 10.689 | Có `is_within_90d_before_churn` |
 | `fact_target` | 1 tháng | `date_key` | 24 | Churn rate dạng tỷ lệ (0,0139) |
+| `customer_snapshot` | 1 khách có tính cước | `customer_key` | 7.032 | Hồ sơ hiện tại + hành vi tổng hợp (vật lý hoá `v_customer_profile`), nạp cuối mỗi batch, phục vụ trang Khám phá |
+| `customer_factor` | 1 khách × 1 yếu tố | (`customer_key`, `factor_key`) | 91.416 | Bảng cầu nối cho lọc động: giá trị của khách ở 13 yếu tố; `dim_factor` giữ tên hiển thị |
+
+Bảng fact và `customer_factor` có thêm nonclustered columnstore index để các truy vấn tổng hợp chạy batch mode
+(xem [03_dashboard_spec.md](03_dashboard_spec.md) mục Hiệu năng).
 
 Quan hệ đều là 1-nhiều từ dimension tới fact. Khoá ngoại được khai báo trong database nên không thể có dòng fact mồ côi.
 Vì hồ sơ dịch vụ, hợp đồng và phương thức thanh toán không đổi theo thời gian (giả định ở giai đoạn 1),

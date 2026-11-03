@@ -3,18 +3,12 @@
   'use strict';
 
   const PAGES = {
-    overview: { title: 'Finance Overview', crumb: 'Báo cáo', period: true, render: renderOverview },
-    drivers: { title: 'Churn Drivers', crumb: 'Báo cáo', period: false, render: renderDrivers },
-    risk: { title: 'Risk Segments', crumb: 'Báo cáo', period: false, render: renderRisk },
-    whatif: { title: 'What-if Scenario', crumb: 'Báo cáo', period: false, render: renderWhatif },
-    quality: { title: 'Data Quality', crumb: 'Vận hành', period: false, render: renderQuality },
+    explore: { title: 'Khám phá churn', crumb: 'Phân tích', render: renderExplore },
+    whatif: { title: 'What-if Scenario', crumb: 'Phân tích', render: renderWhatif },
+    quality: { title: 'Data Quality', crumb: 'Vận hành', render: renderQuality },
   };
-  // Màu gắn với thực thể, không theo thứ hạng: Fiber luôn xanh, DSL luôn cam, không internet luôn aqua.
-  const INTERNET_COLOR = { 'Fiber optic': '--series-1', 'DSL': '--series-2', 'No': '--series-3' };
-  const DRIVER_ORDER = ['Contract', 'Tenure group', 'Internet service', 'Add-on services', 'Tech support',
-    'Online security', 'Payment method', 'Paperless billing', 'Senior citizen'];
 
-  const state = { period: 'all', page: null, cache: {}, charts: {} };
+  const state = { page: null, cache: {}, charts: {} };
 
   /* ---------- tiện ích ---------- */
   const nf = (d) => new Intl.NumberFormat('vi-VN', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -121,359 +115,335 @@
       <b style="font-variant-numeric:tabular-nums">${value}</b></div>`;
   }
 
-  /* ---------- Trang 1: Finance Overview ---------- */
-  async function renderOverview(root) {
-    const [kpiAll, anomaly] = await Promise.all([api('kpi'), api('anomaly')]);
-    const rows = state.period === 'all' ? kpiAll : kpiAll.filter((r) => String(r.year) === state.period);
-    const months = rows.map((r) => r.year_month);
-    const first = rows[0], last = rows[rows.length - 1];
-    const avgChurn = sum(rows, (r) => r.churn_rate) / rows.length;
-    const avgTarget = sum(rows, (r) => r.churn_rate_target) / rows.length;
-    const above = rows.filter((r) => r.churn_rate > r.churn_rate_target);
-    const peak = rows.reduce((a, r) => (r.churn_rate > a.churn_rate ? r : a), rows[0]);
-    const mrrLost = sum(rows, (r) => r.mrr_lost_usd);
-    const peakLost = rows.reduce((a, r) => (r.mrr_lost_usd > a.mrr_lost_usd ? r : a), rows[0]);
-    const mrrBelow = rows.filter((r) => r.mrr_usd < r.mrr_target_usd);
-    const imputed = rows.filter((r) => r.imputed_rows > r.customers / 2).map((r) => r.year_month);
-    const custGrowth = last.customers / first.customers - 1;
-    const mrrVsTarget = last.mrr_vs_target_pct;
+  /* ---------- Trang Khám phá: bật/tắt yếu tố, mọi thứ tính lại theo nhóm đang chọn ---------- */
+  const PRESETS = [
+    { label: 'Toàn công ty', filters: {} },
+    { label: 'Nhóm rủi ro cao', hint: 'Hợp đồng tháng · Fiber · trả tay', filters: { contract: ['Month-to-month'], internet: ['Fiber optic'], payment_type: ['Manual'] } },
+    { label: 'Khách năm đầu', hint: 'gắn bó 0-12 tháng', filters: { tenure: ['0-12 months'] } },
+    { label: 'Khách Fiber', filters: { internet: ['Fiber optic'] } },
+    { label: 'Không dùng dịch vụ đi kèm', hint: 'có internet', filters: { addons: ['0'] } },
+    { label: 'Hợp đồng dài hạn', hint: '1-2 năm', filters: { contract: ['One year', 'Two year'] } },
+  ];
+  const VALUE_LABEL = {
+    'Yes': 'Có', 'No': 'Không', 'No internet service': 'Không dùng internet', 'No phone service': 'Không dùng điện thoại',
+    'Month-to-month': 'Theo tháng', 'One year': '1 năm', 'Two year': '2 năm', 'Fiber optic': 'Fiber', 'DSL': 'DSL',
+    'Manual': 'Trả tay', 'Automatic': 'Tự động', 'Female': 'Nữ', 'Male': 'Nam',
+    'Electronic check': 'Séc điện tử', 'Mailed check': 'Séc gửi bưu điện',
+    'Bank transfer (automatic)': 'Chuyển khoản (tự động)', 'Credit card (automatic)': 'Thẻ tín dụng (tự động)',
+  };
+  const MIN_GROUP = 30;          // nhóm nhỏ hơn mức này thì tỷ lệ dao động mạnh, chỉ hiển thị mờ
+  const MIN_COHORTS = 6;
 
-    root.innerHTML = `
-      ${insight(`Churn vượt chỉ tiêu ${above.length}/${rows.length} tháng; đỉnh ${fmt.pct(peak.churn_rate, 2)} vào ${peak.year_month}.`, [
-        `MRR mất do churn cao nhất ở ${peakLost.year_month}: ${fmt.usd(peakLost.mrr_lost_usd)}, gấp ${fmt.num(peakLost.mrr_lost_usd / (mrrLost / rows.length), 1)} lần bình quân kỳ.`,
-        `MRR hụt chỉ tiêu ${mrrBelow.length}/${rows.length} tháng; tháng cuối kỳ ${mrrVsTarget >= 0 ? 'vượt' : 'hụt'} ${fmt.pct(Math.abs(mrrVsTarget))}.`,
-      ])}
-      <div class="grid kpis">
-        ${kpiCard('Khách có tính cước (cuối kỳ)', fmt.int(last.customers),
-          `${badge(custGrowth >= 0 ? 'good' : 'bad', fmt.pct(custGrowth), custGrowth >= 0 ? 'up' : 'down')} so với đầu kỳ`)}
-        ${kpiCard('Churn rate bình quân/tháng', fmt.pct(avgChurn, 2),
-          `${badge(avgChurn > avgTarget ? 'bad' : 'good', fmt.pp(avgChurn - avgTarget), avgChurn > avgTarget ? 'up' : 'down')} so với chỉ tiêu ${fmt.pct(avgTarget, 2)}`)}
-        ${kpiCard('MRR tháng cuối kỳ', fmt.usd(last.mrr_usd),
-          `${badge(mrrVsTarget >= 0 ? 'good' : 'bad', fmt.pct(mrrVsTarget), mrrVsTarget >= 0 ? 'up' : 'down')} so với chỉ tiêu`)}
-        ${kpiCard('MRR mất do churn (cả kỳ)', fmt.usd(mrrLost), `${fmt.int(sum(rows, (r) => r.churners))} khách rời đi`)}
-        ${kpiCard('ARPU tháng cuối kỳ', fmt.usd2(last.arpu_usd), `đầu kỳ ${fmt.usd2(first.arpu_usd)}`)}
-      </div>
-      <div class="grid two">
-        ${cardHtml('c-mrr', `MRR ${mrrBelow.length === 0 ? 'vượt chỉ tiêu mọi tháng' : `hụt chỉ tiêu ${mrrBelow.length}/${rows.length} tháng`}`,
-          'MRR (USD) so với chỉ tiêu của Finance. Điểm rỗng: tháng ước lượng do sự cố billing.')}
-        ${cardHtml('c-churn', `Churn vượt chỉ tiêu ${above.length}/${rows.length} tháng`,
-          'Churn rate theo tháng. Cột đỏ: vượt chỉ tiêu.')}
-      </div>
-      <div class="grid two">
-        ${cardHtml('c-lost', `MRR mất do churn đỉnh ${fmt.usd(peakLost.mrr_lost_usd)} vào ${peakLost.year_month}`,
-          'Cước tháng cuối của khách rời đi: doanh thu định kỳ sẽ mất từ tháng sau.')}
-        ${cardHtml('c-warn', 'Cảnh báo sớm: ticket Billing', 'Số ticket Billing theo tháng và dải bình thường (trung bình ± 2σ của 24 tháng).')}
-      </div>`;
-
-    const s1 = css('--series-1'), s2 = css('--series-2'), crit = css('--critical'), muted = css('--text-3');
-    const eventLine = months.includes('2025-03') ? {
-      silent: true, symbol: 'none', lineStyle: { color: muted, type: 'dashed' },
-      label: { formatter: 'Tăng giá Fiber', color: muted, fontSize: 11 }, data: [{ xAxis: '2025-03' }],
-    } : undefined;
-    const imputedPoint = imputed.length ? {
-      silent: true, symbol: 'circle', symbolSize: 9,
-      itemStyle: { color: css('--surface'), borderColor: muted, borderWidth: 2 },
-      label: { formatter: 'ước lượng', color: muted, fontSize: 10, position: 'bottom', distance: 6 },
-      data: imputed.map((m) => ({ coord: [m, rows.find((r) => r.year_month === m).mrr_usd] })),
-    } : undefined;
-
-    mountChart('c-mrr', {
-      legend: { ...baseOption().legend, data: ['MRR', 'Chỉ tiêu'] },
-      xAxis: axis({ type: 'category', data: months, boundaryGap: false }),
-      yAxis: axis({ type: 'value', scale: true, axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.usdK(v) } }),
-      tooltip: { ...baseOption().tooltip, formatter: (ps) => {
-        const r = rows[ps[0].dataIndex];
-        return `<b>${r.year_month}</b>${tipRow(s1, 'MRR', fmt.usd(r.mrr_usd))}${tipRow(muted, 'Chỉ tiêu', fmt.usd(r.mrr_target_usd))}
-          ${tipRow(null, 'Chênh lệch', fmt.pct(r.mrr_vs_target_pct))}${tipRow(null, 'MoM', r.mrr_mom_pct == null ? '–' : fmt.pct(r.mrr_mom_pct))}
-          ${r.imputed_rows > r.customers / 2 ? '<div style="color:' + muted + '">Số ước lượng (sự cố billing)</div>' : ''}`;
-      } },
-      series: [
-        { name: 'MRR', type: 'line', data: rows.map((r) => r.mrr_usd), symbol: 'circle', symbolSize: 6, showSymbol: false,
-          lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 },
-          areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: s1 + '33' }, { offset: 1, color: s1 + '00' }]) },
-          markLine: eventLine, markPoint: imputedPoint },
-        { name: 'Chỉ tiêu', type: 'line', data: rows.map((r) => r.mrr_target_usd), showSymbol: false,
-          lineStyle: { width: 2, type: 'dashed', color: muted }, itemStyle: { color: muted } },
-      ],
-    });
-
-    mountChart('c-churn', {
-      legend: { ...baseOption().legend, data: ['Churn rate', 'Chỉ tiêu'] },
-      xAxis: axis({ type: 'category', data: months }),
-      yAxis: axis({ type: 'value', axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, 1) } }),
-      tooltip: { ...baseOption().tooltip, axisPointer: { type: 'shadow' }, formatter: (ps) => {
-        const r = rows[ps[0].dataIndex];
-        return `<b>${r.year_month}</b>${tipRow(r.churn_rate > r.churn_rate_target ? crit : s1, 'Churn rate', fmt.pct(r.churn_rate, 2))}
-          ${tipRow(muted, 'Chỉ tiêu', fmt.pct(r.churn_rate_target, 2))}${tipRow(null, 'Khách rời đi', fmt.int(r.churners))}${tipRow(null, 'Khách trong tháng', fmt.int(r.customers))}`;
-      } },
-      series: [
-        { name: 'Churn rate', type: 'bar', barMaxWidth: 22, itemStyle: { color: s1 },
-          data: rows.map((r) => ({ value: r.churn_rate, itemStyle: { color: r.churn_rate > r.churn_rate_target ? crit : s1, borderRadius: [4, 4, 0, 0] } })),
-          markLine: eventLine },
-        { name: 'Chỉ tiêu', type: 'line', step: 'middle', z: 5, data: rows.map((r) => r.churn_rate_target), showSymbol: false,
-          lineStyle: { width: 2, type: 'dashed', color: muted }, itemStyle: { color: muted } },
-      ],
-    });
-
-    mountChart('c-lost', {
-      xAxis: axis({ type: 'category', data: months }),
-      yAxis: axis({ type: 'value', axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.usdK(v) } }),
-      tooltip: { ...baseOption().tooltip, axisPointer: { type: 'shadow' }, formatter: (ps) => {
-        const r = rows[ps[0].dataIndex];
-        return `<b>${r.year_month}</b>${tipRow(s2, 'MRR mất', fmt.usd(r.mrr_lost_usd))}${tipRow(null, 'Khách rời đi', fmt.int(r.churners))}`;
-      } },
-      series: [{ name: 'MRR mất do churn', type: 'bar', barMaxWidth: 22, data: rows.map((r) => r.mrr_lost_usd),
-        itemStyle: { color: s2, borderRadius: [4, 4, 0, 0] },
-        label: { show: true, position: 'top', fontSize: 10, color: css('--text-2'),
-          formatter: (p) => (rows[p.dataIndex].year_month === peakLost.year_month ? fmt.usdK(p.value) : '') } }],
-    });
-
-    const bt = anomaly.filter((a) => a.segment === 'All' && a.metric === 'Billing tickets' && months.includes(a.year_month));
-    const flagged = bt.filter((a) => a.is_anomaly);
-    const top = flagged.reduce((a, r) => (!a || r.z_score > a.z_score ? r : a), null);
-    if (top) $('#c-warn-title').textContent = `Ticket Billing vượt ngưỡng ${flagged.map((f) => f.year_month).join(', ')} (z = ${fmt.num(top.z_score, 1)})`;
-    mountChart('c-warn', {
-      legend: { ...baseOption().legend, data: ['Ticket Billing', 'Dải bình thường'] },
-      xAxis: axis({ type: 'category', data: bt.map((a) => a.year_month), boundaryGap: false }),
-      yAxis: axis({ type: 'value' }),
-      tooltip: { ...baseOption().tooltip, formatter: (ps) => {
-        const r = bt[ps[0].dataIndex];
-        return `<b>${r.year_month}</b>${tipRow(s1, 'Ticket Billing', fmt.int(r.value))}${tipRow(null, 'Bình quân 24 tháng', fmt.num(r.mean_value, 1))}
-          ${tipRow(null, 'Ngưỡng trên (+2σ)', fmt.num(r.upper_bound, 1))}${tipRow(r.is_anomaly ? crit : null, 'z-score', fmt.num(r.z_score, 2))}`;
-      } },
-      series: [
-        { name: 'lower', type: 'line', stack: 'band', data: bt.map((a) => Math.max(0, a.lower_bound)), showSymbol: false, lineStyle: { opacity: 0 }, silent: true },
-        { name: 'Dải bình thường', type: 'line', stack: 'band', data: bt.map((a) => a.upper_bound - Math.max(0, a.lower_bound)), showSymbol: false,
-          lineStyle: { opacity: 0 }, areaStyle: { color: css('--surface-2') }, itemStyle: { color: css('--border-strong') }, silent: true },
-        { name: 'Ticket Billing', type: 'line', data: bt.map((a) => ({ value: a.value,
-            symbolSize: a.is_anomaly ? 10 : 6, itemStyle: { color: a.is_anomaly ? crit : s1, borderColor: css('--surface'), borderWidth: 2 } })),
-          lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 }, showSymbol: true, symbol: 'circle' },
-      ],
-    });
+  function valueLabel(factor, v) {
+    if (factor === 'addons') return v === 'No internet service' ? 'Không dùng internet' : `${v} dịch vụ`;
+    if (factor === 'tenure') return v.replace(' months', ' tháng');
+    if (factor === 'internet' && v === 'No') return 'Không dùng internet';
+    return VALUE_LABEL[v] || v;
   }
 
-  /* ---------- Trang 2: Churn Drivers ---------- */
-  async function renderDrivers(root) {
-    const [drivers, ic, cohort] = await Promise.all([api('drivers'), api('internet_contract'), api('cohort')]);
-    const byDriver = {};
-    drivers.forEach((d) => (byDriver[d.driver] = byDriver[d.driver] || []).push(d));
-    const spread = DRIVER_ORDER.filter((d) => byDriver[d]).map((d) => {
-      const rs = byDriver[d];
-      return { d, max: Math.max(...rs.map((r) => r.churn_rate)), min: Math.min(...rs.map((r) => r.churn_rate)) };
-    }).sort((a, b) => (b.max - b.min) - (a.max - a.min));
-    const overall = sum(drivers.filter((d) => d.driver === 'Contract'), (r) => r.churners) / sum(drivers.filter((d) => d.driver === 'Contract'), (r) => r.customers);
+  const ex = { filters: {}, catalog: null, charts: {}, ctrl: null, timer: null, last: null };
 
-    const contracts = [...new Set(ic.map((r) => r.contract_type))];
-    const ratio = contracts.map((c) => {
-      const f = ic.find((r) => r.contract_type === c && r.internet_service === 'Fiber optic');
-      const d = ic.find((r) => r.contract_type === c && r.internet_service === 'DSL');
-      return f.churn_rate / d.churn_rate;
-    });
-    const weighted = {};
-    cohort.forEach((r) => { const w = (weighted[r.month_offset] = weighted[r.month_offset] || { a: 0, s: 0, n: 0 }); w.a += r.active_customers; w.s += r.cohort_size; w.n += 1; });
-    // Mốc nào còn quá ít cohort đủ tuổi thì bỏ, tránh đuôi đường cong nhảy lên do nhiễu mẫu nhỏ.
-    const MIN_COHORTS = 6;
-    const curve = Object.keys(weighted).map(Number).sort((a, b) => a - b).filter((k) => weighted[k].n >= MIN_COHORTS)
-      .map((k) => ({ k, v: weighted[k].a / weighted[k].s, n: weighted[k].n }));
-    const drop1 = 1 - curve.find((c) => c.k === 1).v;
+  function filtersFromHash() {
+    const q = location.hash.split('?')[1];
+    if (!q) return {};
+    try { return JSON.parse(decodeURIComponent(new URLSearchParams(q).get('f') || '{}')); } catch (e) { return {}; }
+  }
+  function syncHash() {
+    const has = Object.keys(ex.filters).length;
+    const target = '#explore' + (has ? '?f=' + encodeURIComponent(JSON.stringify(ex.filters)) : '');
+    if (location.hash !== target) history.replaceState(null, '', target);
+  }
 
+  function toggleValue(factor, value) {
+    const cur = new Set(ex.filters[factor] || []);
+    cur.has(value) ? cur.delete(value) : cur.add(value);
+    if (cur.size) ex.filters[factor] = [...cur]; else delete ex.filters[factor];
+    onFiltersChanged();
+  }
+
+  function onFiltersChanged() {
+    syncHash();
+    drawChips();
+    clearTimeout(ex.timer);
+    // Gộp các cú bấm liên tiếp thành một request.
+    ex.timer = setTimeout(refreshExplore, 120);
+  }
+
+  async function renderExplore(root) {
+    // Link có bộ lọc thì dùng bộ lọc đó; quay lại từ trang khác thì giữ bộ lọc đang chọn.
+    if (location.hash.includes('?')) ex.filters = filtersFromHash();
+    syncHash();
+    ex.catalog = ex.catalog || await api('factors');
     root.innerHTML = `
-      ${insight(`${esc(spread[0].d)} phân tách rủi ro mạnh nhất (churn ${fmt.pct(spread[0].min)} đến ${fmt.pct(spread[0].max)}), tiếp theo là ${esc(spread[1].d)} và ${esc(spread[2].d)}.`, [
-        `Churn bình quân 24 tháng của khách có tính cước: ${fmt.pct(overall)}. Đường đứt nét trong mỗi biểu đồ là mức bình quân này.`,
-        `Fiber churn gấp ${fmt.num(Math.min(...ratio), 1)}–${fmt.num(Math.max(...ratio), 1)} lần DSL ngay trong cùng loại hợp đồng, nên Fiber là yếu tố rủi ro riêng.`,
-        `Mất ${fmt.pct(drop1)} khách ngay sau kỳ cước đầu tiên: onboarding là điểm rò rỉ lớn nhất.`,
-      ])}
-      <div class="grid three" id="driverGrid">
-        ${DRIVER_ORDER.filter((d) => byDriver[d]).map((d, i) => {
-          const rs = byDriver[d]; const hi = rs.reduce((a, r) => (r.churn_rate > a.churn_rate ? r : a), rs[0]);
-          return cardHtml(`c-drv-${i}`, esc(d), `Cao nhất: ${esc(hi.driver_value)} (${fmt.pct(hi.churn_rate)})`, 'short');
+      <div class="card">
+        <div class="card-head"><div><h3 class="card-title">Chọn nhóm khách muốn xem</h3>
+          <div class="card-sub">Bấm để bật/tắt. Trong cùng một yếu tố: khách thuộc <b>một trong</b> các lựa chọn. Giữa các yếu tố: phải thoả <b>tất cả</b>.</div></div>
+          <button class="btn" id="exClear" type="button">Xoá lọc</button></div>
+        <div class="presets" id="exPresets">${PRESETS.map((p, i) => `<button type="button" class="preset" data-i="${i}">${esc(p.label)}${p.hint ? `<span>${esc(p.hint)}</span>` : ''}</button>`).join('')}</div>
+        <div class="factor-grid" id="exChips"></div>
+      </div>
+      <div id="exInsight"></div>
+      <div class="grid kpis" id="exKpis"></div>
+      <div class="grid two">
+        ${cardHtml('ex-churn', 'Tỷ lệ rời đi theo tháng', 'Nhóm đang chọn so với toàn công ty.')}
+        ${cardHtml('ex-mrr', 'Doanh thu định kỳ (MRR) theo tháng', 'Tổng cước hàng tháng của nhóm đang chọn (USD).')}
+      </div>
+      <div class="card"><div class="card-head"><div><h3 class="card-title" id="exImpactTitle">Yếu tố nào tạo khác biệt lớn nhất?</h3>
+        <div class="card-sub">Chia tiếp nhóm đang chọn theo từng yếu tố: mỗi dòng là tỷ lệ khách đã rời đi trong 24 tháng. Yếu tố chênh lệch nhiều nhất đứng đầu. <b>Bấm một dòng để thêm vào bộ lọc.</b></div></div></div>
+        <div class="impact-grid" id="exImpact"></div></div>
+      <div class="grid two">
+        ${cardHtml('ex-retention', 'Sau khi ký, còn giữ được bao nhiêu khách?', 'Tỷ lệ khách còn dùng dịch vụ sau k tháng (khách bắt đầu từ 12/2023).')}
+        ${cardHtml('ex-tickets', 'Ticket khiếu nại hoá đơn trên 100 khách', 'Tín hiệu cảnh báo sớm: thường tăng trước khi khách rời đi.')}
+      </div>
+      <div class="card"><div class="card-head"><div><h3 class="card-title">Danh sách khách đang hoạt động trong nhóm</h3>
+        <div class="card-sub">Để đội chăm sóc khách hàng gọi điện / ưu đãi giữ chân.</div></div>
+        <button class="btn primary" id="exCustomers" type="button">Xem danh sách khách</button></div></div>`;
+
+    ex.charts = {};
+    ['ex-churn', 'ex-mrr', 'ex-retention', 'ex-tickets'].forEach((id) => { ex.charts[id] = mountChart(id, {}); });
+    $('#exClear').addEventListener('click', () => { ex.filters = {}; onFiltersChanged(); });
+    $('#exPresets').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-i]');
+      if (b) { ex.filters = JSON.parse(JSON.stringify(PRESETS[+b.dataset.i].filters)); onFiltersChanged(); }
+    });
+    $('#exChips').addEventListener('click', (e) => {
+      const c = e.target.closest('button[data-f]');
+      if (c) toggleValue(c.dataset.f, c.dataset.v);
+    });
+    $('#exImpact').addEventListener('click', (e) => {
+      const r = e.target.closest('[data-f]');
+      if (r) toggleValue(r.dataset.f, r.dataset.v);
+    });
+    $('#exCustomers').addEventListener('click', openCustomerList);
+    drawChips();
+    await refreshExplore();
+  }
+
+  function drawChips() {
+    const el = $('#exChips');
+    if (!el) return;
+    el.innerHTML = ex.catalog.map((f) => `
+      <div class="factor"><div class="factor-label">${esc(f.label)}</div><div class="chips">
+        ${f.values.map((v) => {
+          const on = (ex.filters[f.key] || []).includes(v.value);
+          return `<button type="button" class="chip ${on ? 'on' : ''}" aria-pressed="${on}" data-f="${esc(f.key)}" data-v="${esc(v.value)}">${esc(valueLabel(f.key, v.value))}</button>`;
         }).join('')}
-      </div>
-      <div class="grid two">
-        ${cardHtml('c-ic', `Fiber churn gấp ${fmt.num(Math.min(...ratio), 1)}–${fmt.num(Math.max(...ratio), 1)} lần DSL trong cùng loại hợp đồng`,
-          'Churn rate 24 tháng theo loại hợp đồng và loại internet (phân tích có kiểm soát).')}
-        ${cardHtml('c-curve', `Mất ${fmt.pct(drop1)} khách ngay sau kỳ cước đầu tiên`,
-          'Retention bình quân có trọng số, cohort ký từ 12/2023 (tránh thiên lệch sống sót); chỉ vẽ mốc có ≥ 6 cohort.')}
-      </div>
-      ${cardHtml('c-cohort', 'Cohort retention theo tháng ký hợp đồng', 'Tỷ lệ khách còn giữ, đọc theo thang màu bên dưới. Cột = số tháng kể từ kỳ cước đầu.', 'tall')}`;
+      </div></div>`).join('');
+    document.querySelectorAll('#exPresets .preset').forEach((b) => {
+      b.classList.toggle('on', JSON.stringify(normalize(PRESETS[+b.dataset.i].filters)) === JSON.stringify(normalize(ex.filters)));
+    });
+  }
+  const normalize = (f) => Object.keys(f).sort().reduce((o, k) => (o[k] = [...f[k]].sort(), o), {});
 
-    const s1 = css('--series-1'), muted = css('--text-3');
-    DRIVER_ORDER.filter((d) => byDriver[d]).forEach((d, i) => {
-      const rs = byDriver[d].slice().sort((a, b) => (a.sort_order ?? 99) - (b.sort_order ?? 99) || b.churn_rate - a.churn_rate).reverse();
-      mountChart(`c-drv-${i}`, {
-        grid: { left: 8, right: 44, top: 8, bottom: 4, containLabel: true },
-        xAxis: axis({ type: 'value', max: Math.max(0.6, ...rs.map((r) => r.churn_rate)), axisLabel: { show: false }, splitLine: { show: false } }),
-        yAxis: axis({ type: 'category', data: rs.map((r) => r.driver_value), axisLine: { show: false },
-          axisLabel: { ...axis().axisLabel, color: css('--text-2'), width: 160, overflow: 'truncate' } }),
-        tooltip: { ...baseOption().tooltip, trigger: 'item', formatter: (p) => {
-          const r = rs[p.dataIndex];
-          return `<b>${esc(r.driver_value)}</b>${tipRow(s1, 'Churn rate', fmt.pct(r.churn_rate))}${tipRow(null, 'Khách', fmt.int(r.customers))}
-            ${tipRow(null, 'Rời đi', fmt.int(r.churners))}${tipRow(null, 'So với bình quân', '×' + fmt.num(r.lift_vs_overall, 2))}`;
-        } },
-        series: [{ type: 'bar', barMaxWidth: 16, data: rs.map((r) => r.churn_rate), itemStyle: { color: s1, borderRadius: [0, 4, 4, 0] },
-          label: { show: true, position: 'right', fontSize: 11, color: css('--text-2'), formatter: (p) => fmt.pct(p.value, 0) },
-          markLine: { silent: true, symbol: 'none', lineStyle: { color: muted, type: 'dashed' }, label: { show: false }, data: [{ xAxis: overall }] } }],
+  async function refreshExplore() {
+    if (ex.ctrl) ex.ctrl.abort();
+    ex.ctrl = new AbortController();
+    document.getElementById('page-explore').classList.add('loading');
+    try {
+      const res = await fetch('/api/explore', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filters: ex.filters }), signal: ex.ctrl.signal,
       });
-    });
-
-    const internets = ['Fiber optic', 'DSL', 'No'];
-    const icLabel = { 'Fiber optic': 'Fiber optic', 'DSL': 'DSL', 'No': 'Không internet' };
-    mountChart('c-ic', {
-      legend: { ...baseOption().legend, data: internets.map((n) => icLabel[n]) },
-      xAxis: axis({ type: 'category', data: contracts }),
-      yAxis: axis({ type: 'value', axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, 0) } }),
-      tooltip: { ...baseOption().tooltip, axisPointer: { type: 'shadow' }, formatter: (ps) => `<b>${ps[0].axisValue}</b>` + ps.map((p) => {
-        const r = ic.find((x) => x.contract_type === p.axisValue && icLabel[x.internet_service] === p.seriesName);
-        return tipRow(p.color, p.seriesName, `${fmt.pct(r.churn_rate)} · ${fmt.int(r.customers)} khách`);
-      }).join('') },
-      series: internets.map((n) => ({
-        name: icLabel[n], type: 'bar', barMaxWidth: 26, barGap: '12%',
-        itemStyle: { color: css(INTERNET_COLOR[n]), borderRadius: [4, 4, 0, 0], borderColor: css('--surface'), borderWidth: 1 },
-        data: contracts.map((c) => ic.find((r) => r.contract_type === c && r.internet_service === n).churn_rate),
-        label: { show: n !== 'No', position: 'top', fontSize: 10, color: css('--text-2'), formatter: (p) => fmt.pct(p.value, 0) },
-      })),
-    });
-
-    mountChart('c-curve', {
-      xAxis: axis({ type: 'category', data: curve.map((c) => c.k), name: 'Tháng kể từ kỳ cước đầu', nameLocation: 'middle', nameGap: 26,
-        nameTextStyle: { color: muted, fontSize: 11 }, boundaryGap: false }),
-      yAxis: axis({ type: 'value', min: 0.4, max: 1, axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, 0) } }),
-      grid: { left: 8, right: 16, top: 16, bottom: 28, containLabel: true },
-      tooltip: { ...baseOption().tooltip, formatter: (ps) => `<b>Tháng ${ps[0].axisValue}</b>${tipRow(s1, 'Retention', fmt.pct(ps[0].value))}${tipRow(null, 'Số cohort', curve[ps[0].dataIndex].n)}` },
-      series: [{ type: 'line', data: curve.map((c) => c.v), lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 }, showSymbol: false,
-        areaStyle: { color: s1 + '1f' } }],
-    });
-
-    const cohorts = [...new Set(cohort.map((r) => r.cohort_label))];
-    const maxOffset = Math.max(...cohort.map((r) => r.month_offset));
-    mountChart('c-cohort', {
-      grid: { left: 8, right: 16, top: 8, bottom: 48, containLabel: true },
-      tooltip: { ...baseOption().tooltip, trigger: 'item', formatter: (p) => {
-        const r = cohort.find((x) => x.cohort_label === cohorts[p.value[1]] && x.month_offset === p.value[0]);
-        return `<b>Cohort ${r.cohort_label} · tháng ${r.month_offset}</b>${tipRow(null, 'Retention', fmt.pct(r.retention_rate))}
-          ${tipRow(null, 'Còn hoạt động', `${fmt.int(r.active_customers)}/${fmt.int(r.cohort_size)}`)}`;
-      } },
-      xAxis: axis({ type: 'category', data: [...Array(maxOffset + 1).keys()], splitArea: { show: false } }),
-      yAxis: axis({ type: 'category', data: cohorts, inverse: true }),
-      visualMap: { min: 0.4, max: 1, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 160,
-        inRange: { color: [css('--seq-100'), css('--seq-300'), css('--seq-500'), css('--seq-700')] },
-        text: ['100%', '40%'], textStyle: { color: muted, fontSize: 11 } },
-      series: [{ type: 'heatmap', data: cohort.map((r) => [r.month_offset, cohorts.indexOf(r.cohort_label), r.retention_rate]),
-        itemStyle: { borderColor: css('--surface'), borderWidth: 2, borderRadius: 3 }, emphasis: { itemStyle: { borderColor: css('--text') } } }],
-    });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      ex.last = await res.json();
+      drawExplore(ex.last);
+    } catch (e) {
+      if (e.name !== 'AbortError') { toast('Không tải được dữ liệu'); console.error(e); }
+    } finally {
+      document.getElementById('page-explore')?.classList.remove('loading');
+    }
   }
 
-  /* ---------- Trang 3: Risk Segments ---------- */
-  async function renderRisk(root) {
-    const segs = await api('risk_segments');
-    const total = sum(segs, (s) => s.expected_mrr_loss_usd);
-    const high = segs.filter((s) => s.is_high_risk);
-    const highLoss = sum(high, (s) => s.expected_mrr_loss_usd);
-    const top3 = segs.slice(0, 3);
-    const overall = segs[0].overall_monthly_churn_rate;
-
-    root.innerHTML = `
-      ${insight(`${high.length} phân khúc chiếm ${fmt.pct(highLoss / total)} MRR dự kiến mất mỗi tháng: ${high.map((h) => esc(h.risk_segment)).join(', ')}.`, [
-        `Rủi ro cao = đồng thời ≥ 5% khách, churn ≥ 1,5 lần bình quân (${fmt.pct(overall, 2)}/tháng) và ≥ 10% MRR hiện tại.`,
-        `Ba phân khúc đầu bảng chiếm ${fmt.pct(sum(top3, (s) => s.expected_mrr_loss_usd) / total)} MRR dự kiến mất. Bấm vào một phân khúc để xem danh sách khách.`,
-      ])}
-      <div class="grid kpis">
-        ${kpiCard('MRR dự kiến mất / tháng', fmt.usd(total), 'nếu churn giữ như 24 tháng qua')}
-        ${kpiCard('Phân khúc rủi ro cao', fmt.int(high.length), `trên ${segs.length} phân khúc`)}
-        ${kpiCard('MRR hiện tại của nhóm rủi ro cao', fmt.usd(sum(high, (s) => s.current_mrr_usd)), `${fmt.pct(sum(high, (s) => s.mrr_share))} tổng MRR`)}
-        ${kpiCard('Khách đang hoạt động (rủi ro cao)', fmt.int(sum(high, (s) => s.active_customers)), 'đối tượng chăm sóc ưu tiên')}
-        ${kpiCard('Churn bình quân / tháng', fmt.pct(overall, 2), 'toàn bộ khách, 24 tháng')}
-      </div>
-      <div class="grid wide-left">
-        ${cardHtml('c-bubble', 'Phân khúc: quy mô khách và mức churn', 'Trục ngang: tỷ trọng khách · Trục dọc: churn so với bình quân · Kích thước: MRR hiện tại. Bấm bong bóng để xem khách.', 'tall')}
-        <div class="card"><div class="card-head"><div><h3 class="card-title">Top MRR dự kiến mất / tháng</h3>
-          <div class="card-sub">= MRR hiện tại × churn theo tháng của phân khúc</div></div></div>
-          <div class="chart tall" id="c-loss"></div></div>
-      </div>
-      <div class="card"><div class="card-head"><div><h3 class="card-title">Tất cả phân khúc</h3>
-        <div class="card-sub">Hợp đồng | Internet | Hình thức thanh toán. Bấm một dòng để drill-through.</div></div></div>
-        <div class="table-wrap"><table id="segTable"><thead><tr>
-          <th>Phân khúc</th><th class="r">Khách (24 th)</th><th class="r">Đang hoạt động</th><th class="r">Churn/tháng</th>
-          <th class="r">× bình quân</th><th class="r">MRR hiện tại</th><th class="r">MRR dự kiến mất</th><th>Mức</th></tr></thead>
-          <tbody>${segs.map((s) => `<tr class="clickable" data-seg="${esc(s.risk_segment)}">
-            <td>${esc(s.risk_segment)}</td><td class="r num">${fmt.int(s.customers)}</td><td class="r num">${fmt.int(s.active_customers)}</td>
-            <td class="r num">${fmt.pct(s.monthly_churn_rate, 2)}</td><td class="r num">${fmt.num(s.churn_lift, 2)}</td>
-            <td class="r num">${fmt.usd(s.current_mrr_usd)}</td>
-            <td class="r"><div class="bar-cell"><div class="bar ${s.is_high_risk ? 'crit' : ''}" style="width:${Math.max(2, 90 * s.expected_mrr_loss_usd / segs[0].expected_mrr_loss_usd)}px"></div><span class="num">${fmt.usd(s.expected_mrr_loss_usd)}</span></div></td>
-            <td>${s.is_high_risk ? badge('bad', 'Rủi ro cao') : s.churn_lift >= 1.5 ? badge('warn', 'Churn cao') : badge('neutral', 'Theo dõi')}</td></tr>`).join('')}
-          </tbody></table></div></div>`;
-
-    const s1 = css('--series-1'), crit = css('--critical'), neutral = css('--neutral-mark');
-    const maxMrr = Math.max(...segs.map((s) => s.current_mrr_usd));
-    const maxShare = Math.max(...segs.map((s) => s.customer_share));
-    const bubble = mountChart('c-bubble', {
-      grid: { left: 8, right: 24, top: 16, bottom: 32, containLabel: true },
-      xAxis: axis({ type: 'value', name: 'Tỷ trọng khách', nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: css('--text-3'), fontSize: 11 },
-        axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, 0) } }),
-      yAxis: axis({ type: 'value', name: 'Churn × bình quân', nameTextStyle: { color: css('--text-3'), fontSize: 11 } }),
-      tooltip: { ...baseOption().tooltip, trigger: 'item', formatter: (p) => {
-        const s = segs[p.dataIndex];
-        return `<b>${esc(s.risk_segment)}</b>${tipRow(null, 'Tỷ trọng khách', fmt.pct(s.customer_share))}${tipRow(null, 'Churn/tháng', `${fmt.pct(s.monthly_churn_rate, 2)} (×${fmt.num(s.churn_lift, 2)})`)}
-          ${tipRow(null, 'MRR hiện tại', fmt.usd(s.current_mrr_usd))}${tipRow(s.is_high_risk ? crit : null, 'MRR dự kiến mất', fmt.usd(s.expected_mrr_loss_usd))}`;
-      } },
-      series: [{ type: 'scatter', data: segs.map((s) => ({
-          value: [s.customer_share, s.churn_lift],
-          symbolSize: 10 + 46 * Math.sqrt(s.current_mrr_usd / maxMrr),
-          itemStyle: { color: s.is_high_risk ? crit : s.churn_lift >= 1.5 ? s1 : neutral, opacity: 0.85, borderColor: css('--surface'), borderWidth: 2 },
-          label: { show: s.is_high_risk || segs.indexOf(s) < 3, formatter: s.risk_segment, fontSize: 11, color: css('--text-2'),
-            position: s.customer_share > 0.6 * maxShare ? 'left' : 'right' },
-        })),
-        markLine: { silent: true, symbol: 'none', lineStyle: { color: css('--text-3'), type: 'dashed' },
-          label: { formatter: 'bình quân', color: css('--text-3'), fontSize: 10 }, data: [{ yAxis: 1 }] } }],
+  function filterSummary() {
+    const parts = Object.entries(ex.filters).map(([k, vs]) => {
+      const f = ex.catalog.find((c) => c.key === k);
+      return `${f.label}: ${vs.map((v) => valueLabel(k, v)).join(' hoặc ')}`;
     });
-    bubble.on('click', (p) => openSegment(segs[p.dataIndex]));
-
-    const topLoss = segs.slice(0, 8).reverse();
-    mountChart('c-loss', {
-      grid: { left: 8, right: 56, top: 8, bottom: 8, containLabel: true },
-      xAxis: axis({ type: 'value', axisLabel: { show: false }, splitLine: { show: false } }),
-      yAxis: axis({ type: 'category', data: topLoss.map((s) => s.risk_segment), axisLine: { show: false },
-        axisLabel: { ...axis().axisLabel, color: css('--text-2'), width: 170, overflow: 'truncate' } }),
-      tooltip: { ...baseOption().tooltip, trigger: 'item', formatter: (p) => `<b>${esc(topLoss[p.dataIndex].risk_segment)}</b>${tipRow(null, 'MRR dự kiến mất', fmt.usd(p.value))}` },
-      series: [{ type: 'bar', barMaxWidth: 16, data: topLoss.map((s) => ({ value: s.expected_mrr_loss_usd,
-          itemStyle: { color: s.is_high_risk ? crit : s1, borderRadius: [0, 4, 4, 0] } })),
-        label: { show: true, position: 'right', fontSize: 11, color: css('--text-2'), formatter: (p) => fmt.usd(p.value) } }],
-    }).on('click', (p) => openSegment(topLoss[p.dataIndex]));
-
-    $('#segTable tbody').addEventListener('click', (e) => {
-      const tr = e.target.closest('tr[data-seg]');
-      if (tr) openSegment(segs.find((s) => s.risk_segment === tr.dataset.seg));
-    });
+    return parts.length ? parts.join(' · ') : 'Toàn công ty';
   }
 
-  async function openSegment(seg) {
-    $('#drawerTitle').textContent = seg.risk_segment;
+  function drawExplore(d) {
+    const k = d.kpi;
+    const filtered = Object.keys(ex.filters).length > 0;
+    const selRate = k.sel_customers ? k.sel_churners / k.sel_customers : 0;
+    const allRate = k.all_churners / k.all_customers;
+    const selMonthly = k.sel_customer_months ? k.sel_churners / k.sel_customer_months : 0;
+    const allMonthly = k.all_churners / k.all_customer_months;
+    const selMrr = k.sel_mrr || 0;
+    const selLoss = selMrr * selMonthly, allLoss = k.all_mrr * allMonthly;
+    const small = k.sel_customers < 100;
+
+    // Thống kê từng yếu tố: chênh lệch giữa nhánh churn cao nhất và thấp nhất (chỉ xét nhánh đủ lớn).
+    const byFactor = {};
+    d.breakdown.forEach((b) => (byFactor[b.factor_key] = byFactor[b.factor_key] || []).push(b));
+    const impacts = ex.catalog.map((f) => {
+      const rows = (byFactor[f.key] || []).slice().sort((a, b) => a.value_sort - b.value_sort);
+      const big = rows.filter((r) => r.customers >= MIN_GROUP);
+      const rates = big.map((r) => r.churners / r.customers);
+      const spread = big.length >= 2 ? Math.max(...rates) - Math.min(...rates) : 0;
+      return { f, rows, spread, big };
+    }).sort((a, b) => b.spread - a.spread);
+    const topFree = impacts.find((i) => !ex.filters[i.f.key] && i.big.length >= 2);
+
+    // Insight viết bằng câu thường cho người không chuyên.
+    const bullets = [];
+    if (filtered) {
+      bullets.push(`Nhóm có <b>${fmt.int(k.sel_customers)}</b> khách (${fmt.pct(k.sel_customers / k.all_customers)} công ty); <b>${fmt.pct(selRate)}</b> đã rời đi trong 24 tháng, ${selRate >= allRate ? `<b>gấp ${fmt.num(selRate / allRate, 1)} lần</b>` : `chỉ bằng <b>${fmt.num(selRate / allRate, 2)} lần</b>`} mức chung (${fmt.pct(allRate)}).`);
+    } else {
+      bullets.push(`${fmt.pct(allRate)} khách có tính cước trong 24 tháng đã rời đi (${fmt.int(k.all_churners)}/${fmt.int(k.all_customers)}). Chọn yếu tố hoặc một góc nhìn có sẵn để so sánh.`);
+    }
+    if (topFree) {
+      const rs = topFree.big.map((r) => ({ r, rate: r.churners / r.customers })).sort((a, b) => b.rate - a.rate);
+      bullets.push(`Trong nhóm này, <b>${esc(topFree.f.label.toLowerCase())}</b> tạo khác biệt lớn nhất: ${esc(valueLabel(topFree.f.key, rs[0].r.value))} rời đi ${fmt.pct(rs[0].rate)} so với ${esc(valueLabel(topFree.f.key, rs[rs.length - 1].r.value))} chỉ ${fmt.pct(rs[rs.length - 1].rate)}.`);
+    }
+    const peak = d.trend.reduce((a, t) => (t.sel_customers && (!a || t.sel_churners / t.sel_customers > a.sel_churners / a.sel_customers) ? t : a), null);
+    if (peak) bullets.push(`Tháng rời đi nhiều nhất: ${peak.year_month} (${fmt.pct(peak.sel_churners / peak.sel_customers, 2)} khách của nhóm).`);
+    if (selMrr) bullets.push(`Nhóm đang đóng góp ${fmt.usd(selMrr)}/tháng (${fmt.pct(selMrr / k.all_mrr)} MRR); nếu không làm gì, dự kiến mất khoảng <b>${fmt.usd(selLoss)}</b> MRR mỗi tháng.`);
+    if (small) bullets.push('<b>Lưu ý:</b> nhóm dưới 100 khách, tỷ lệ có thể dao động mạnh, nên xem như tham khảo.');
+    $('#exInsight').innerHTML = insight(`Đang xem: ${esc(filterSummary())}`, bullets);
+
+    const lift = allRate ? selRate / allRate : 0;
+    $('#exKpis').innerHTML = [
+      kpiCard('Số khách trong nhóm', fmt.int(k.sel_customers), `${fmt.pct(k.sel_customers / k.all_customers)} toàn công ty${small ? ' ' + badge('warn', 'mẫu nhỏ') : ''}`),
+      kpiCard('Đã rời đi (24 tháng)', fmt.pct(selRate),
+        filtered ? `${badge(lift > 1.05 ? 'bad' : lift < 0.95 ? 'good' : 'neutral', '×' + fmt.num(lift, 2), lift > 1.05 ? 'up' : lift < 0.95 ? 'down' : null)} so với mức chung ${fmt.pct(allRate)}` : `${fmt.int(k.all_churners)} khách`),
+      kpiCard('Rời đi mỗi tháng', fmt.pct(selMonthly, 2), filtered ? `mức chung ${fmt.pct(allMonthly, 2)}` : 'bình quân 24 tháng'),
+      kpiCard('MRR hiện tại', fmt.usd(selMrr), `${fmt.int(k.sel_active)} khách còn hoạt động · ${fmt.pct(k.all_mrr ? selMrr / k.all_mrr : 0)} MRR`),
+      kpiCard('MRR dự kiến mất / tháng', fmt.usd(selLoss), filtered ? `${fmt.pct(allLoss ? selLoss / allLoss : 0)} mức mất toàn công ty` : 'nếu churn giữ như 24 tháng qua'),
+    ].join('');
+
+    const imp = $('#exImpact');
+    imp.innerHTML = impacts.map(({ f, rows, spread }) => {
+      const maxRate = Math.max(0.01, ...rows.map((r) => r.churners / r.customers));
+      return `<div class="impact ${ex.filters[f.key] ? 'filtered' : ''}">
+        <div class="impact-head"><b>${esc(f.label)}</b><span class="muted">${spread ? `chênh ${fmt.num(spread * 100, 1)} điểm %` : 'không đủ dữ liệu so sánh'}</span></div>
+        ${rows.map((r) => {
+          const rate = r.churners / r.customers;
+          const on = (ex.filters[f.key] || []).includes(r.value);
+          const tiny = r.customers < MIN_GROUP;
+          const delta = rate - selRate;
+          return `<button type="button" class="impact-row ${on ? 'on' : ''} ${tiny ? 'tiny' : ''}" data-f="${esc(f.key)}" data-v="${esc(r.value)}"
+              title="${esc(valueLabel(f.key, r.value))}: ${fmt.int(r.churners)}/${fmt.int(r.customers)} khách đã rời đi">
+            <span class="impact-name">${esc(valueLabel(f.key, r.value))}</span>
+            <span class="impact-bar"><span style="width:${(100 * rate / maxRate).toFixed(1)}%" class="${rate > selRate * 1.2 && !tiny ? 'hot' : ''}"></span></span>
+            <span class="impact-val num">${fmt.pct(rate)}</span>
+            <span class="impact-n num">${tiny ? 'mẫu nhỏ' : fmt.int(r.customers) + ' khách'}</span>
+            <span class="impact-delta num ${delta > 0.005 ? 'up' : delta < -0.005 ? 'down' : ''}">${(delta >= 0 ? '+' : '−') + fmt.num(Math.abs(delta) * 100, 1)}</span>
+          </button>`;
+        }).join('')}
+      </div>`;
+    }).join('');
+    if (impacts[0]) $('#exImpactTitle').textContent = topFree
+      ? `Yếu tố tạo khác biệt lớn nhất lúc này: ${topFree.f.label}`
+      : 'Yếu tố nào tạo khác biệt lớn nhất?';
+
+    drawExploreCharts(d, filtered);
+  }
+
+  function drawExploreCharts(d, filtered) {
+    const s1 = css('--series-1'), muted = css('--text-3');
+    const months = d.trend.map((t) => t.year_month);
+    const selName = filtered ? 'Nhóm đang chọn' : 'Toàn công ty';
+    const event = { silent: true, symbol: 'none', lineStyle: { color: muted, type: 'dashed' },
+      label: { formatter: 'Tăng giá Fiber', color: muted, fontSize: 11 }, data: [{ xAxis: '2025-03' }] };
+
+    const churnSeries = [{ name: selName, type: 'line', data: d.trend.map((t) => (t.sel_customers ? t.sel_churners / t.sel_customers : null)),
+      showSymbol: false, lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 }, markLine: event }];
+    churnSeries.push(filtered
+      ? { name: 'Toàn công ty', type: 'line', data: d.trend.map((t) => t.all_churners / t.all_customers), showSymbol: false,
+          lineStyle: { width: 2, color: css('--neutral-mark') }, itemStyle: { color: css('--neutral-mark') } }
+      : { name: 'Chỉ tiêu', type: 'line', step: 'middle', data: d.trend.map((t) => t.churn_rate_target), showSymbol: false,
+          lineStyle: { width: 2, type: 'dashed', color: muted }, itemStyle: { color: muted } });
+    ex.charts['ex-churn'].setOption({
+      legend: { ...baseOption().legend, data: churnSeries.map((s) => s.name) },
+      xAxis: axis({ type: 'category', data: months, boundaryGap: false }),
+      yAxis: axis({ type: 'value', axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, 1) } }),
+      tooltip: { ...baseOption().tooltip, formatter: (ps) => {
+        const t = d.trend[ps[0].dataIndex];
+        return `<b>${t.year_month}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, p.value == null ? '–' : fmt.pct(p.value, 2))).join('')
+          + (t.sel_customers ? tipRow(null, 'Khách rời đi / trong nhóm', `${fmt.int(t.sel_churners)}/${fmt.int(t.sel_customers)}`) : '');
+      } },
+      series: churnSeries,
+    }, true);
+
+    const mrrSeries = [{ name: selName, type: 'line', data: d.trend.map((t) => t.sel_mrr), showSymbol: false,
+      lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 }, areaStyle: { color: s1 + '1f' }, markLine: event }];
+    if (!filtered) mrrSeries.push({ name: 'Chỉ tiêu', type: 'line', data: d.trend.map((t) => t.mrr_target_usd), showSymbol: false,
+      lineStyle: { width: 2, type: 'dashed', color: muted }, itemStyle: { color: muted } });
+    ex.charts['ex-mrr'].setOption({
+      legend: { ...baseOption().legend, data: mrrSeries.map((s) => s.name) },
+      xAxis: axis({ type: 'category', data: months, boundaryGap: false }),
+      yAxis: axis({ type: 'value', scale: !filtered, axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.usdK(v) } }),
+      tooltip: { ...baseOption().tooltip, formatter: (ps) => {
+        const t = d.trend[ps[0].dataIndex];
+        return `<b>${t.year_month}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, fmt.usd(p.value))).join('')
+          + tipRow(null, 'MRR mất do khách rời đi', fmt.usd(t.sel_mrr_lost)) + (filtered ? tipRow(null, 'Tỷ trọng trong công ty', fmt.pct(t.sel_mrr / t.all_mrr)) : '');
+      } },
+      series: mrrSeries,
+    }, true);
+
+    // Retention: mẫu số ở tháng k = số khách đã đủ k tháng tính tới snapshot.
+    const base = d.retention_base;
+    const ks = d.retention.map((r) => r.k).sort((a, b) => a - b);
+    const curve = ks.map((kk) => {
+      const r = d.retention.find((x) => x.k === kk);
+      const eligible = base.filter((b) => b.max_k >= kk);
+      const allDen = sum(eligible, (b) => b.all_customers), selDen = sum(eligible, (b) => b.sel_customers);
+      return { k: kk, cohorts: eligible.length, all: allDen ? r.all_active / allDen : null, sel: selDen >= MIN_GROUP ? r.sel_active / selDen : null };
+    }).filter((c) => c.cohorts >= MIN_COHORTS);
+    const retSeries = [{ name: selName, type: 'line', data: curve.map((c) => c.sel), showSymbol: false, connectNulls: false,
+      lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 } }];
+    if (filtered) retSeries.push({ name: 'Toàn công ty', type: 'line', data: curve.map((c) => c.all), showSymbol: false,
+      lineStyle: { width: 2, color: css('--neutral-mark') }, itemStyle: { color: css('--neutral-mark') } });
+    ex.charts['ex-retention'].setOption({
+      legend: { ...baseOption().legend, data: retSeries.map((s) => s.name) },
+      grid: { left: 8, right: 16, top: 36, bottom: 28, containLabel: true },
+      xAxis: axis({ type: 'category', data: curve.map((c) => c.k), boundaryGap: false, name: 'Tháng kể từ kỳ cước đầu',
+        nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: muted, fontSize: 11 } }),
+      yAxis: axis({ type: 'value', min: 0, max: 1, axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, 0) } }),
+      tooltip: { ...baseOption().tooltip, formatter: (ps) => `<b>Tháng ${ps[0].axisValue}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, p.value == null ? 'mẫu nhỏ' : fmt.pct(p.value))).join('') },
+      series: retSeries,
+    }, true);
+
+    const tByMonth = Object.fromEntries(d.tickets.map((t) => [t.year_month, t]));
+    const tickSeries = [{ name: selName, type: 'line', showSymbol: false, lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 }, markLine: event,
+      data: d.trend.map((t) => (t.sel_customers ? 100 * ((tByMonth[t.year_month] || {}).sel_billing || 0) / t.sel_customers : null)) }];
+    if (filtered) tickSeries.push({ name: 'Toàn công ty', type: 'line', showSymbol: false, lineStyle: { width: 2, color: css('--neutral-mark') },
+      itemStyle: { color: css('--neutral-mark') }, data: d.trend.map((t) => 100 * ((tByMonth[t.year_month] || {}).all_billing || 0) / t.all_customers) });
+    ex.charts['ex-tickets'].setOption({
+      legend: { ...baseOption().legend, data: tickSeries.map((s) => s.name) },
+      xAxis: axis({ type: 'category', data: months, boundaryGap: false }),
+      yAxis: axis({ type: 'value', min: 0 }),
+      tooltip: { ...baseOption().tooltip, formatter: (ps) => `<b>${months[ps[0].dataIndex]}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, p.value == null ? '–' : fmt.num(p.value, 1) + ' / 100 khách')).join('') },
+      series: tickSeries,
+    }, true);
+  }
+
+  async function openCustomerList() {
+    $('#drawerTitle').textContent = filterSummary();
     $('#drawerBody').innerHTML = '<div class="skeleton"></div>';
     $('#drawer').classList.add('open'); $('#drawerBackdrop').classList.add('open');
     $('#drawer').setAttribute('aria-hidden', 'false');
     try {
-      const res = await api('segment_customers', { segment: seg.risk_segment });
-      renderSegmentTable(seg, res.rows, res.limit);
+      const res = await fetch('/api/explore/customers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ex.filters }) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      renderCustomerTable(data.rows, data.limit);
     } catch (e) {
       $('#drawerBody').innerHTML = `<p class="error">Không tải được danh sách khách: ${esc(e.message)}</p>`;
     }
   }
 
-  function renderSegmentTable(seg, rows, limit) {
+  function renderCustomerTable(rows, limit) {
     const cols = [
-      ['customer_id', 'Mã khách', 's'], ['tenure_months', 'Tenure (th)', 'n'], ['current_mrr_usd', 'Cước hiện tại', 'usd'],
-      ['tickets', 'Ticket', 'n'], ['billing_tickets', 'Ticket Billing', 'n'], ['late_payment_rate', 'Tỷ lệ trả trễ', 'pct'],
-      ['tech_support', 'Tech support', 's'], ['addon_count', 'Add-on', 'n'], ['payment_method', 'Thanh toán', 's'],
+      ['customer_id', 'Mã khách', 's'], ['contract_type', 'Hợp đồng', 's'], ['internet_service', 'Internet', 's'],
+      ['tenure_months', 'Gắn bó (th)', 'n'], ['current_mrr_usd', 'Cước hiện tại', 'usd'], ['tickets', 'Ticket', 'n'],
+      ['billing_tickets', 'Ticket hoá đơn', 'n'], ['late_payment_rate', 'Trả trễ', 'pct'], ['tech_support', 'Hỗ trợ KT', 's'],
+      ['addon_count', 'Dịch vụ kèm', 'n'], ['payment_method', 'Thanh toán', 's'],
     ];
     let sortKey = 'current_mrr_usd', sortDir = -1, query = '';
     const body = $('#drawerBody');
     body.innerHTML = `
-      <div class="mini-stats">
-        <div><div class="k">Đang hoạt động</div><div class="v num">${fmt.int(seg.active_customers)}</div></div>
-        <div><div class="k">Churn / tháng</div><div class="v num">${fmt.pct(seg.monthly_churn_rate, 2)}</div></div>
-        <div><div class="k">MRR hiện tại</div><div class="v num">${fmt.usd(seg.current_mrr_usd)}</div></div>
-        <div><div class="k">MRR dự kiến mất</div><div class="v num">${fmt.usd(seg.expected_mrr_loss_usd)}</div></div>
-      </div>
       <div class="toolbar">
         <input class="input" id="custSearch" placeholder="Tìm mã khách..." aria-label="Tìm mã khách">
         <span class="muted" id="custCount"></span>
@@ -482,7 +452,7 @@
       <div class="table-wrap"><table><thead><tr>${cols.map(([k, l, t]) => `<th class="sortable ${t === 's' ? '' : 'r'}" data-k="${k}">${l}</th>`).join('')}</tr></thead>
       <tbody id="custBody"></tbody></table></div>
       ${rows.length >= limit ? `<p class="muted">Hiển thị ${limit} khách có cước cao nhất.</p>` : ''}`;
-    const cell = (r, k, t) => (r[k] == null ? '–' : t === 'usd' ? fmt.usd2(r[k]) : t === 'pct' ? fmt.pct(r[k], 0) : t === 'n' ? fmt.int(r[k]) : esc(r[k]));
+    const cell = (r, k, t) => (r[k] == null ? '–' : t === 'usd' ? fmt.usd2(r[k]) : t === 'pct' ? fmt.pct(r[k], 0) : t === 'n' ? fmt.int(r[k]) : esc(valueLabel('', r[k])));
     const visible = () => rows.filter((r) => r.customer_id.toLowerCase().includes(query))
       .sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir);
     const draw = () => {
@@ -497,7 +467,7 @@
     $('#custExport').addEventListener('click', () => {
       const lines = [cols.map((c) => c[0]).join(',')].concat(visible().map((r) => cols.map(([k]) => `"${String(r[k] ?? '').replace(/"/g, '""')}"`).join(',')));
       const url = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
-      const a = Object.assign(document.createElement('a'), { href: url, download: `khach_${seg.risk_segment.replace(/\W+/g, '_')}.csv` });
+      const a = Object.assign(document.createElement('a'), { href: url, download: 'khach_hang_nhom_dang_chon.csv' });
       a.click(); URL.revokeObjectURL(url); toast('Đã xuất CSV');
     });
     draw();
@@ -649,13 +619,12 @@
 
   /* ---------- điều hướng, theme, khởi động ---------- */
   async function show(page) {
-    if (!PAGES[page]) page = 'overview';
+    if (!PAGES[page]) page = 'explore';
     state.page = page;
     const def = PAGES[page];
     document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.page === page));
     document.querySelectorAll('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + page));
     $('#pageTitle').textContent = def.title; $('#crumb').textContent = def.crumb;
-    $('#periodFilter').classList.toggle('hidden', !def.period);
     document.title = `${def.title} · Telco Churn Analytics`;
     $('#sidebar').classList.remove('open');
     closeDrawer();
@@ -690,21 +659,16 @@
     const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     setTheme(cur === 'dark' ? 'light' : 'dark');
   });
-  $('#periodFilter').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-period]');
-    if (!b) return;
-    state.period = b.dataset.period;
-    document.querySelectorAll('#periodFilter button').forEach((x) => x.classList.toggle('active', x === b));
-    show(state.page);
-  });
   $('#menuBtn').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
   $('#drawerClose').addEventListener('click', closeDrawer);
   $('#drawerBackdrop').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
-  window.addEventListener('hashchange', () => show(location.hash.slice(1)));
+  // Bộ lọc của trang Khám phá nằm sau dấu ? trong hash; chỉ vẽ lại trang khi đổi trang.
+  const pageFromHash = () => location.hash.slice(1).split('?')[0];
+  window.addEventListener('hashchange', () => { if (pageFromHash() !== state.page) show(pageFromHash()); });
   window.addEventListener('resize', () => Object.values(state.charts).forEach((c) => c.resize()));
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => show(state.page));
 
   loadMeta();
-  show(location.hash.slice(1) || 'overview');
+  show(pageFromHash() || 'explore');
 })();
