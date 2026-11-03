@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telco Churn Analytics</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232a78d6'/%3E%3Cpath d='M6 17V11m4 6V7m4 10v-4m4 4V9' stroke='white' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script>
+    // Áp theme trước khi vẽ trang để không bị nháy màu.
+    try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 18V9m5 9V5m5 13v-6m5 6V8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">Telco Churn</div>
+        <div class="brand-sub">Analytics workspace</div>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="Trang">
+      <div class="nav-label">Báo cáo</div>
+      <a href="#overview" data-page="overview">
+        <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-18v6h8V3z"/></svg>Finance Overview</a>
+      <a href="#drivers" data-page="drivers">
+        <svg viewBox="0 0 24 24"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Churn Drivers</a>
+      <a href="#risk" data-page="risk">
+        <svg viewBox="0 0 24 24"><path d="M12 3 2 21h20L12 3zm0 6v5m0 3v.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Risk Segments</a>
+      <a href="#whatif" data-page="whatif">
+        <svg viewBox="0 0 24 24"><path d="M4 6h10M4 12h16M4 18h7m5-12v.01M18 18v.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="17" cy="6" r="2.4" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="18" r="2.4" fill="none" stroke="currentColor" stroke-width="2"/></svg>What-if Scenario</a>
+      <div class="nav-label">Vận hành</div>
+      <a href="#quality" data-page="quality">
+        <svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3zm-3.5 9 2.5 2.5 4.5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Data Quality</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="freshness" id="freshness">Đang tải...</div>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Đổi giao diện sáng/tối">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" fill="currentColor"/></svg>
+        <span>Giao diện</span>
+      </button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="menu-btn" id="menuBtn" type="button" aria-label="Mở menu">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="topbar-titles">
+        <div class="crumb" id="crumb">Báo cáo</div>
+        <h1 id="pageTitle">Finance Overview</h1>
+      </div>
+      <div class="topbar-actions">
+        <div class="segmented" id="periodFilter" role="group" aria-label="Kỳ báo cáo">
+          <button type="button" data-period="all" class="active">24 tháng</button>
+          <button type="button" data-period="2024">2024</button>
+          <button type="button" data-period="2025">2025</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="content" id="content">
+      <section class="page" id="page-overview"></section>
+      <section class="page" id="page-drivers"></section>
+      <section class="page" id="page-risk"></section>
+      <section class="page" id="page-whatif"></section>
+      <section class="page" id="page-quality"></section>
+    </div>
+  </main>
+</div>
+
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <div>
+      <div class="crumb">Drill-through · khách đang hoạt động</div>
+      <h2 id="drawerTitle">Phân khúc</h2>
+    </div>
+    <button class="icon-btn" id="drawerClose" type="button" aria-label="Đóng">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+
+<div class="tooltip-layer" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
