@@ -131,11 +131,12 @@ Cần thử nghiệm A/B có nhóm đối chứng trước khi triển khai rộ
 
 ## Dashboard
 
-Web app Flask + ECharts thay cho Power BI, gồm 3 trang:
+Web app Flask + ECharts thay cho Power BI. Hai trang chính vừa **một màn hình** (khung tham chiếu: 1 trang A4 ngang):
+một câu kết luận, 4 KPI, 2 khối nội dung; chi tiết chỉ mở khi cần.
 
-- **Khám phá churn:** bật/tắt 13 yếu tố (một hay nhiều cùng lúc) hoặc chọn góc nhìn có sẵn. Mọi KPI, xu hướng, retention, bảng "yếu tố nào tạo khác biệt lớn nhất" và danh sách khách (xuất CSV) tính lại ngay theo nhóm đang chọn, luôn so với toàn công ty, kèm insight viết bằng câu thường.
+- **Khám phá churn:** bật/tắt 13 yếu tố (một hay nhiều cùng lúc) hoặc chọn góc nhìn có sẵn. KPI, xu hướng và top 5 yếu tố khác biệt nhất tính lại ngay theo nhóm đang chọn, luôn so với toàn công ty. Bảng chọn hiện sẵn tỷ lệ rời đi của từng lựa chọn. Có danh sách khách xuất CSV.
 - **What-if Scenario:** thanh trượt tỷ lệ chuyển hợp đồng, chiết khấu, tầm nhìn.
-- **Data Quality:** 26 kiểm tra, bản ghi bị loại, các bước ETL.
+- **Data Quality:** trang tra cứu cho đội dữ liệu, gồm 26 kiểm tra, bản ghi bị loại và các bước ETL.
 
 **Hiệu năng:** mỗi lần đổi bộ lọc chỉ gọi 1 stored procedure (1 round-trip, không N+1), bộ lọc truyền dạng JSON (không SQL động).
 Kỹ thuật dùng: bảng cầu nối khách × yếu tố, columnstore index, cache theo batch ETL. Kết quả: ~290 ms cho bộ lọc mới, ~2 ms khi trúng cache.

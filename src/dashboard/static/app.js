@@ -3,8 +3,8 @@
   'use strict';
 
   const PAGES = {
-    explore: { title: 'Khám phá churn', crumb: 'Phân tích', render: renderExplore },
-    whatif: { title: 'What-if Scenario', crumb: 'Phân tích', render: renderWhatif },
+    explore: { title: 'Khám phá churn', crumb: 'Phân tích', render: renderExplore, fit: true },
+    whatif: { title: 'What-if Scenario', crumb: 'Phân tích', render: renderWhatif, fit: true },
     quality: { title: 'Data Quality', crumb: 'Vận hành', render: renderQuality },
   };
 
@@ -115,24 +115,27 @@
       <b style="font-variant-numeric:tabular-nums">${value}</b></div>`;
   }
 
-  /* ---------- Trang Khám phá: bật/tắt yếu tố, mọi thứ tính lại theo nhóm đang chọn ---------- */
+  /* ---------- Trang Khám phá: vừa 1 màn hình; chi tiết mở khi cần ---------- */
   const PRESETS = [
     { label: 'Toàn công ty', filters: {} },
-    { label: 'Nhóm rủi ro cao', hint: 'Hợp đồng tháng · Fiber · trả tay', filters: { contract: ['Month-to-month'], internet: ['Fiber optic'], payment_type: ['Manual'] } },
+    { label: 'Nhóm rủi ro cao', hint: 'hợp đồng tháng · Fiber · trả tay', filters: { contract: ['Month-to-month'], internet: ['Fiber optic'], payment_type: ['Manual'] } },
     { label: 'Khách năm đầu', hint: 'gắn bó 0-12 tháng', filters: { tenure: ['0-12 months'] } },
     { label: 'Khách Fiber', filters: { internet: ['Fiber optic'] } },
-    { label: 'Không dùng dịch vụ đi kèm', hint: 'có internet', filters: { addons: ['0'] } },
-    { label: 'Hợp đồng dài hạn', hint: '1-2 năm', filters: { contract: ['One year', 'Two year'] } },
+    { label: 'Không dùng dịch vụ kèm', hint: 'có internet, 0 dịch vụ', filters: { addons: ['0'] } },
+    { label: 'Hợp đồng dài hạn', hint: '1 hoặc 2 năm', filters: { contract: ['One year', 'Two year'] } },
   ];
+  const MAIN_FACTORS = ['contract', 'internet', 'tenure', 'addons', 'payment_type', 'tech_support'];
+  const SHORT_LABEL = { contract: 'Hợp đồng', internet: 'Internet', tenure: 'Gắn bó', addons: 'Dịch vụ kèm',
+    payment_type: 'Thanh toán', tech_support: 'Hỗ trợ KT' };
   const VALUE_LABEL = {
     'Yes': 'Có', 'No': 'Không', 'No internet service': 'Không dùng internet', 'No phone service': 'Không dùng điện thoại',
     'Month-to-month': 'Theo tháng', 'One year': '1 năm', 'Two year': '2 năm', 'Fiber optic': 'Fiber', 'DSL': 'DSL',
     'Manual': 'Trả tay', 'Automatic': 'Tự động', 'Female': 'Nữ', 'Male': 'Nam',
-    'Electronic check': 'Séc điện tử', 'Mailed check': 'Séc gửi bưu điện',
-    'Bank transfer (automatic)': 'Chuyển khoản (tự động)', 'Credit card (automatic)': 'Thẻ tín dụng (tự động)',
+    'Electronic check': 'Séc điện tử', 'Mailed check': 'Séc bưu điện',
+    'Bank transfer (automatic)': 'Chuyển khoản tự động', 'Credit card (automatic)': 'Thẻ tín dụng tự động',
   };
-  const MIN_GROUP = 30;          // nhóm nhỏ hơn mức này thì tỷ lệ dao động mạnh, chỉ hiển thị mờ
-  const MIN_COHORTS = 6;
+  const MIN_GROUP = 30;          // nhánh nhỏ hơn mức này thì tỷ lệ dao động mạnh: hiển thị mờ, không xếp hạng
+  const TOP_FACTORS = 5;
 
   function valueLabel(factor, v) {
     if (factor === 'addons') return v === 'No internet service' ? 'Không dùng internet' : `${v} dịch vụ`;
@@ -141,7 +144,8 @@
     return VALUE_LABEL[v] || v;
   }
 
-  const ex = { filters: {}, catalog: null, charts: {}, ctrl: null, timer: null, last: null };
+  const ex = { filters: {}, catalog: null, ctrl: null, timer: null, last: null, popFactor: null };
+  const normalize = (f) => Object.keys(f).sort().reduce((o, k) => (o[k] = [...f[k]].sort(), o), {});
 
   function filtersFromHash() {
     const q = location.hash.split('?')[1];
@@ -149,8 +153,7 @@
     try { return JSON.parse(decodeURIComponent(new URLSearchParams(q).get('f') || '{}')); } catch (e) { return {}; }
   }
   function syncHash() {
-    const has = Object.keys(ex.filters).length;
-    const target = '#explore' + (has ? '?f=' + encodeURIComponent(JSON.stringify(ex.filters)) : '');
+    const target = '#explore' + (Object.keys(ex.filters).length ? '?f=' + encodeURIComponent(JSON.stringify(ex.filters)) : '');
     if (location.hash !== target) history.replaceState(null, '', target);
   }
 
@@ -163,103 +166,148 @@
 
   function onFiltersChanged() {
     syncHash();
-    drawChips();
+    drawFilterBar();
+    if (ex.popFactor) drawPopover();
     clearTimeout(ex.timer);
-    // Gộp các cú bấm liên tiếp thành một request.
-    ex.timer = setTimeout(refreshExplore, 120);
+    ex.timer = setTimeout(refreshExplore, 120);   // gộp các cú bấm liên tiếp thành một request
   }
 
   async function renderExplore(root) {
-    // Link có bộ lọc thì dùng bộ lọc đó; quay lại từ trang khác thì giữ bộ lọc đang chọn.
     if (location.hash.includes('?')) ex.filters = filtersFromHash();
     syncHash();
     ex.catalog = ex.catalog || await api('factors');
     root.innerHTML = `
-      <div class="card">
-        <div class="card-head"><div><h3 class="card-title">Chọn nhóm khách muốn xem</h3>
-          <div class="card-sub">Bấm để bật/tắt. Trong cùng một yếu tố: khách thuộc <b>một trong</b> các lựa chọn. Giữa các yếu tố: phải thoả <b>tất cả</b>.</div></div>
-          <button class="btn" id="exClear" type="button">Xoá lọc</button></div>
-        <div class="presets" id="exPresets">${PRESETS.map((p, i) => `<button type="button" class="preset" data-i="${i}">${esc(p.label)}${p.hint ? `<span>${esc(p.hint)}</span>` : ''}</button>`).join('')}</div>
-        <div class="factor-grid" id="exChips"></div>
+      <div class="card filterbar">
+        <select class="input select" id="exPreset" aria-label="Góc nhìn có sẵn"></select>
+        <div class="pills" id="exPills"></div>
+        <div class="spacer"></div>
+        <button class="btn ghost no-print" id="exClear" type="button">Xoá lọc</button>
+        <button class="btn no-print" id="exCustomers" type="button" title="Danh sách khách đang hoạt động trong nhóm, xuất CSV">${ICON.download}Danh sách khách</button>
       </div>
-      <div id="exInsight"></div>
-      <div class="grid kpis" id="exKpis"></div>
-      <div class="grid two">
-        ${cardHtml('ex-churn', 'Tỷ lệ rời đi theo tháng', 'Nhóm đang chọn so với toàn công ty.')}
-        ${cardHtml('ex-mrr', 'Doanh thu định kỳ (MRR) theo tháng', 'Tổng cước hàng tháng của nhóm đang chọn (USD).')}
-      </div>
-      <div class="card"><div class="card-head"><div><h3 class="card-title" id="exImpactTitle">Yếu tố nào tạo khác biệt lớn nhất?</h3>
-        <div class="card-sub">Chia tiếp nhóm đang chọn theo từng yếu tố: mỗi dòng là tỷ lệ khách đã rời đi trong 24 tháng. Yếu tố chênh lệch nhiều nhất đứng đầu. <b>Bấm một dòng để thêm vào bộ lọc.</b></div></div></div>
-        <div class="impact-grid" id="exImpact"></div></div>
-      <div class="grid two">
-        ${cardHtml('ex-retention', 'Sau khi ký, còn giữ được bao nhiêu khách?', 'Tỷ lệ khách còn dùng dịch vụ sau k tháng (khách bắt đầu từ 12/2023).')}
-        ${cardHtml('ex-tickets', 'Ticket khiếu nại hoá đơn trên 100 khách', 'Tín hiệu cảnh báo sớm: thường tăng trước khi khách rời đi.')}
-      </div>
-      <div class="card"><div class="card-head"><div><h3 class="card-title">Danh sách khách đang hoạt động trong nhóm</h3>
-        <div class="card-sub">Để đội chăm sóc khách hàng gọi điện / ưu đãi giữ chân.</div></div>
-        <button class="btn primary" id="exCustomers" type="button">Xem danh sách khách</button></div></div>`;
-
-    ex.charts = {};
-    ['ex-churn', 'ex-mrr', 'ex-retention', 'ex-tickets'].forEach((id) => { ex.charts[id] = mountChart(id, {}); });
+      <div class="headline" id="exHeadline"></div>
+      <div class="grid kpis4" id="exKpis"></div>
+      <div class="grid main-split">
+        <div class="card flex-card">
+          <div class="card-head"><div><h3 class="card-title" id="exChartTitle">Tỷ lệ rời đi theo tháng</h3>
+            <div class="card-sub" id="exChartSub"></div></div></div>
+          <div class="chart fill" id="ex-churn"></div>
+        </div>
+        <div class="card flex-card">
+          <div class="card-head"><div><h3 class="card-title">Yếu tố khác biệt nhất</h3>
+            <div class="card-sub">Nhánh rời đi nhiều nhất và ít nhất. Bấm để lọc.</div></div>
+            <button class="btn link no-print" id="exAll" type="button">Xem cả 13</button></div>
+          <div class="top-factors" id="exTop"></div>
+        </div>
+      </div>`;
+    mountChart('ex-churn', {});
+    $('#exPreset').addEventListener('change', (e) => {
+      if (e.target.value === '') return;
+      ex.filters = JSON.parse(JSON.stringify(PRESETS[+e.target.value].filters));
+      onFiltersChanged();
+    });
+    $('#exPills').addEventListener('click', (e) => {
+      const rm = e.target.closest('[data-rm]');
+      if (rm) { delete ex.filters[rm.dataset.rm]; onFiltersChanged(); return; }
+      const b = e.target.closest('button[data-pop]');
+      if (b) openPopover(b.dataset.pop, b);
+    });
     $('#exClear').addEventListener('click', () => { ex.filters = {}; onFiltersChanged(); });
-    $('#exPresets').addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-i]');
-      if (b) { ex.filters = JSON.parse(JSON.stringify(PRESETS[+b.dataset.i].filters)); onFiltersChanged(); }
-    });
-    $('#exChips').addEventListener('click', (e) => {
-      const c = e.target.closest('button[data-f]');
-      if (c) toggleValue(c.dataset.f, c.dataset.v);
-    });
-    $('#exImpact').addEventListener('click', (e) => {
-      const r = e.target.closest('[data-f]');
-      if (r) toggleValue(r.dataset.f, r.dataset.v);
-    });
     $('#exCustomers').addEventListener('click', openCustomerList);
-    drawChips();
+    $('#exAll').addEventListener('click', openAllFactors);
+    $('#exTop').addEventListener('click', (e) => {
+      const v = e.target.closest('[data-f]');
+      if (v) toggleValue(v.dataset.f, v.dataset.v);
+    });
+    drawFilterBar();
     await refreshExplore();
   }
 
-  function drawChips() {
-    const el = $('#exChips');
-    if (!el) return;
-    el.innerHTML = ex.catalog.map((f) => `
-      <div class="factor"><div class="factor-label">${esc(f.label)}</div><div class="chips">
-        ${f.values.map((v) => {
-          const on = (ex.filters[f.key] || []).includes(v.value);
-          return `<button type="button" class="chip ${on ? 'on' : ''}" aria-pressed="${on}" data-f="${esc(f.key)}" data-v="${esc(v.value)}">${esc(valueLabel(f.key, v.value))}</button>`;
-        }).join('')}
-      </div></div>`).join('');
-    document.querySelectorAll('#exPresets .preset').forEach((b) => {
-      b.classList.toggle('on', JSON.stringify(normalize(PRESETS[+b.dataset.i].filters)) === JSON.stringify(normalize(ex.filters)));
-    });
+  function drawFilterBar() {
+    const sel = $('#exPreset');
+    if (!sel) return;
+    const match = PRESETS.findIndex((p) => JSON.stringify(normalize(p.filters)) === JSON.stringify(normalize(ex.filters)));
+    sel.innerHTML = `<option value="" ${match < 0 ? 'selected' : ''}>${match < 0 ? 'Bộ lọc tuỳ chọn' : 'Góc nhìn có sẵn'}</option>`
+      + PRESETS.map((p, i) => `<option value="${i}" ${i === match ? 'selected' : ''} title="${esc(p.hint || '')}">${esc(p.label)}</option>`).join('');
+    const pill = (key, label) => {
+      const vals = ex.filters[key] || [];
+      const text = vals.map((v) => valueLabel(key, v)).join(', ');
+      return `<span class="pill ${vals.length ? 'on' : ''}"><button type="button" data-pop="${key}" aria-haspopup="true">
+        <span class="pill-k">${esc(label)}${text ? ':' : ''}</span> ${esc(text)} <span class="caret">▾</span></button>${vals.length ? `<button type="button" class="pill-x" data-rm="${key}" aria-label="Bỏ lọc ${esc(label)}">✕</button>` : ''}</span>`;
+    };
+    const others = ex.catalog.filter((c) => !MAIN_FACTORS.includes(c.key));
+    const otherActive = others.filter((c) => ex.filters[c.key]).length;
+    $('#exPills').innerHTML = MAIN_FACTORS.map((k) => pill(k, SHORT_LABEL[k])).join('')
+      + `<span class="pill ${otherActive ? 'on' : ''}"><button type="button" data-pop="__other" aria-haspopup="true"><span class="pill-k">Khác${otherActive ? ':' : ''}</span> ${otherActive ? `${otherActive} đang lọc` : ''} <span class="caret">▾</span></button></span>`;
   }
-  const normalize = (f) => Object.keys(f).sort().reduce((o, k) => (o[k] = [...f[k]].sort(), o), {});
+
+  /* Popover chọn giá trị: hiện luôn tỷ lệ rời đi của từng lựa chọn trong ngữ cảnh hiện tại. */
+  function openPopover(key, anchor) {
+    ex.popFactor = key;
+    let pop = $('#popover');
+    if (!pop) {
+      pop = Object.assign(document.createElement('div'), { id: 'popover', className: 'popover' });
+      document.body.appendChild(pop);
+      pop.addEventListener('change', (e) => { const c = e.target.closest('input[data-f]'); if (c) toggleValue(c.dataset.f, c.dataset.v); });
+      document.addEventListener('mousedown', (e) => { if (ex.popFactor && !pop.contains(e.target) && !e.target.closest('[data-pop]')) closePopover(); });
+    }
+    const r = anchor.getBoundingClientRect();
+    pop.style.top = `${r.bottom + 6 + window.scrollY}px`;
+    pop.style.left = `${Math.min(r.left + window.scrollX, window.innerWidth - 340)}px`;
+    pop.classList.add('open');
+    drawPopover();
+  }
+  function closePopover() { ex.popFactor = null; $('#popover')?.classList.remove('open'); }
+
+  function drawPopover() {
+    const pop = $('#popover');
+    if (!pop || !ex.popFactor) return;
+    const byKey = {};
+    (ex.last?.breakdown || []).forEach((b) => ((byKey[b.factor_key] = byKey[b.factor_key] || {})[b.value] = b));
+    const factors = ex.popFactor === '__other' ? ex.catalog.filter((c) => !MAIN_FACTORS.includes(c.key))
+      : ex.catalog.filter((c) => c.key === ex.popFactor);
+    pop.innerHTML = factors.map((f) => `<div class="pop-group"><div class="pop-title">${esc(f.label)}</div>
+      ${f.values.map((v) => {
+        const b = (byKey[f.key] || {})[v.value];
+        const rate = b && b.customers ? b.churners / b.customers : null;
+        const on = (ex.filters[f.key] || []).includes(v.value);
+        return `<label class="pop-row"><input type="checkbox" data-f="${esc(f.key)}" data-v="${esc(v.value)}" ${on ? 'checked' : ''}>
+          <span>${esc(valueLabel(f.key, v.value))}</span>
+          <span class="muted num">${b ? fmt.int(b.customers) + ' khách' : '0 khách'}</span>
+          <b class="num">${rate == null ? '–' : fmt.pct(rate)}</b></label>`;
+      }).join('')}</div>`).join('') + '<div class="pop-foot muted">Cột phải: tỷ lệ đã rời đi trong 24 tháng, theo các bộ lọc còn lại.</div>';
+  }
 
   async function refreshExplore() {
     if (ex.ctrl) ex.ctrl.abort();
     ex.ctrl = new AbortController();
-    document.getElementById('page-explore').classList.add('loading');
+    $('#page-explore')?.classList.add('loading');
     try {
       const res = await fetch('/api/explore', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filters: ex.filters }), signal: ex.ctrl.signal,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       ex.last = await res.json();
       drawExplore(ex.last);
+      if (ex.popFactor) drawPopover();
     } catch (e) {
       if (e.name !== 'AbortError') { toast('Không tải được dữ liệu'); console.error(e); }
     } finally {
-      document.getElementById('page-explore')?.classList.remove('loading');
+      $('#page-explore')?.classList.remove('loading');
     }
   }
 
-  function filterSummary() {
-    const parts = Object.entries(ex.filters).map(([k, vs]) => {
-      const f = ex.catalog.find((c) => c.key === k);
-      return `${f.label}: ${vs.map((v) => valueLabel(k, v)).join(' hoặc ')}`;
-    });
-    return parts.length ? parts.join(' · ') : 'Toàn công ty';
+  function factorImpacts(d) {
+    const byFactor = {};
+    d.breakdown.forEach((b) => (byFactor[b.factor_key] = byFactor[b.factor_key] || []).push(b));
+    return ex.catalog.map((f) => {
+      const rows = (byFactor[f.key] || []).slice().sort((a, b) => a.value_sort - b.value_sort)
+        .map((r) => ({ ...r, rate: r.churners / r.customers }));
+      // "Không dùng internet" ở các yếu tố phụ thuộc internet chỉ lặp lại yếu tố Loại internet, nên không xếp hạng.
+      const big = rows.filter((r) => r.customers >= MIN_GROUP && !(f.key !== 'internet' && r.value === 'No internet service'))
+        .sort((a, b) => b.rate - a.rate);
+      return { f, rows, hi: big[0], lo: big[big.length - 1], spread: big.length >= 2 ? big[0].rate - big[big.length - 1].rate : 0 };
+    }).sort((a, b) => b.spread - a.spread);
   }
 
   function drawExplore(d) {
@@ -268,162 +316,127 @@
     const selRate = k.sel_customers ? k.sel_churners / k.sel_customers : 0;
     const allRate = k.all_churners / k.all_customers;
     const selMonthly = k.sel_customer_months ? k.sel_churners / k.sel_customer_months : 0;
-    const allMonthly = k.all_churners / k.all_customer_months;
     const selMrr = k.sel_mrr || 0;
-    const selLoss = selMrr * selMonthly, allLoss = k.all_mrr * allMonthly;
-    const small = k.sel_customers < 100;
-
-    // Thống kê từng yếu tố: chênh lệch giữa nhánh churn cao nhất và thấp nhất (chỉ xét nhánh đủ lớn).
-    const byFactor = {};
-    d.breakdown.forEach((b) => (byFactor[b.factor_key] = byFactor[b.factor_key] || []).push(b));
-    const impacts = ex.catalog.map((f) => {
-      const rows = (byFactor[f.key] || []).slice().sort((a, b) => a.value_sort - b.value_sort);
-      const big = rows.filter((r) => r.customers >= MIN_GROUP);
-      const rates = big.map((r) => r.churners / r.customers);
-      const spread = big.length >= 2 ? Math.max(...rates) - Math.min(...rates) : 0;
-      return { f, rows, spread, big };
-    }).sort((a, b) => b.spread - a.spread);
-    const topFree = impacts.find((i) => !ex.filters[i.f.key] && i.big.length >= 2);
-
-    // Insight viết bằng câu thường cho người không chuyên.
-    const bullets = [];
-    if (filtered) {
-      bullets.push(`Nhóm có <b>${fmt.int(k.sel_customers)}</b> khách (${fmt.pct(k.sel_customers / k.all_customers)} công ty); <b>${fmt.pct(selRate)}</b> đã rời đi trong 24 tháng, ${selRate >= allRate ? `<b>gấp ${fmt.num(selRate / allRate, 1)} lần</b>` : `chỉ bằng <b>${fmt.num(selRate / allRate, 2)} lần</b>`} mức chung (${fmt.pct(allRate)}).`);
-    } else {
-      bullets.push(`${fmt.pct(allRate)} khách có tính cước trong 24 tháng đã rời đi (${fmt.int(k.all_churners)}/${fmt.int(k.all_customers)}). Chọn yếu tố hoặc một góc nhìn có sẵn để so sánh.`);
-    }
-    if (topFree) {
-      const rs = topFree.big.map((r) => ({ r, rate: r.churners / r.customers })).sort((a, b) => b.rate - a.rate);
-      bullets.push(`Trong nhóm này, <b>${esc(topFree.f.label.toLowerCase())}</b> tạo khác biệt lớn nhất: ${esc(valueLabel(topFree.f.key, rs[0].r.value))} rời đi ${fmt.pct(rs[0].rate)} so với ${esc(valueLabel(topFree.f.key, rs[rs.length - 1].r.value))} chỉ ${fmt.pct(rs[rs.length - 1].rate)}.`);
-    }
-    const peak = d.trend.reduce((a, t) => (t.sel_customers && (!a || t.sel_churners / t.sel_customers > a.sel_churners / a.sel_customers) ? t : a), null);
-    if (peak) bullets.push(`Tháng rời đi nhiều nhất: ${peak.year_month} (${fmt.pct(peak.sel_churners / peak.sel_customers, 2)} khách của nhóm).`);
-    if (selMrr) bullets.push(`Nhóm đang đóng góp ${fmt.usd(selMrr)}/tháng (${fmt.pct(selMrr / k.all_mrr)} MRR); nếu không làm gì, dự kiến mất khoảng <b>${fmt.usd(selLoss)}</b> MRR mỗi tháng.`);
-    if (small) bullets.push('<b>Lưu ý:</b> nhóm dưới 100 khách, tỷ lệ có thể dao động mạnh, nên xem như tham khảo.');
-    $('#exInsight').innerHTML = insight(`Đang xem: ${esc(filterSummary())}`, bullets);
-
+    const selLoss = selMrr * selMonthly;
     const lift = allRate ? selRate / allRate : 0;
+    const impacts = factorImpacts(d);
+    // Yếu tố đang lọc đúng một giá trị thì không còn gì để so trong nhóm, bỏ khỏi bảng xếp hạng.
+    const ranked = impacts.filter((i) => i.spread > 0 && !(ex.filters[i.f.key] || []).length);
+    const top = ranked[0];
+
+    const who = filtered ? `Nhóm ${fmt.int(k.sel_customers)} khách (${fmt.pct(k.sel_customers / k.all_customers, 0)} công ty)` : 'Toàn công ty';
+    const vs = filtered ? `, ${lift >= 1 ? `gấp <b>${fmt.num(lift, 1)} lần</b>` : `bằng <b>${fmt.num(lift, 2)} lần</b>`} mức chung ${fmt.pct(allRate)}` : '';
+    const driver = top ? `. Khác biệt nhất: <b>${esc(top.f.label.toLowerCase())}</b> (${esc(valueLabel(top.f.key, top.hi.value))} ${fmt.pct(top.hi.rate)} so với ${esc(valueLabel(top.f.key, top.lo.value))} ${fmt.pct(top.lo.rate)})` : '';
+    $('#exHeadline').innerHTML = `${ICON.bulb}<span>${who}: <b>${fmt.pct(selRate)}</b> đã rời đi trong 24 tháng${vs}${driver}.`
+      + `${k.sel_customers < 100 ? ` ${badge('warn', 'nhóm dưới 100 khách, xem như tham khảo')}` : ''}</span>`;
+
     $('#exKpis').innerHTML = [
-      kpiCard('Số khách trong nhóm', fmt.int(k.sel_customers), `${fmt.pct(k.sel_customers / k.all_customers)} toàn công ty${small ? ' ' + badge('warn', 'mẫu nhỏ') : ''}`),
+      kpiCard('Khách trong nhóm', fmt.int(k.sel_customers), filtered ? `${fmt.pct(k.sel_customers / k.all_customers)} toàn công ty` : 'có tính cước trong 24 tháng'),
       kpiCard('Đã rời đi (24 tháng)', fmt.pct(selRate),
-        filtered ? `${badge(lift > 1.05 ? 'bad' : lift < 0.95 ? 'good' : 'neutral', '×' + fmt.num(lift, 2), lift > 1.05 ? 'up' : lift < 0.95 ? 'down' : null)} so với mức chung ${fmt.pct(allRate)}` : `${fmt.int(k.all_churners)} khách`),
-      kpiCard('Rời đi mỗi tháng', fmt.pct(selMonthly, 2), filtered ? `mức chung ${fmt.pct(allMonthly, 2)}` : 'bình quân 24 tháng'),
-      kpiCard('MRR hiện tại', fmt.usd(selMrr), `${fmt.int(k.sel_active)} khách còn hoạt động · ${fmt.pct(k.all_mrr ? selMrr / k.all_mrr : 0)} MRR`),
-      kpiCard('MRR dự kiến mất / tháng', fmt.usd(selLoss), filtered ? `${fmt.pct(allLoss ? selLoss / allLoss : 0)} mức mất toàn công ty` : 'nếu churn giữ như 24 tháng qua'),
+        filtered ? `${badge(lift > 1.05 ? 'bad' : lift < 0.95 ? 'good' : 'neutral', '×' + fmt.num(lift, 2), lift > 1.05 ? 'up' : lift < 0.95 ? 'down' : null)} so với mức chung` : `${fmt.int(k.all_churners)} khách · ${fmt.pct(selMonthly, 2)}/tháng`),
+      kpiCard('MRR hiện tại', fmt.usd(selMrr), filtered ? `${fmt.pct(k.all_mrr ? selMrr / k.all_mrr : 0)} doanh thu định kỳ` : `${fmt.int(k.sel_active)} khách còn hoạt động`),
+      kpiCard('MRR dự kiến mất / tháng', fmt.usd(selLoss), 'nếu không có hành động giữ chân'),
     ].join('');
 
-    const imp = $('#exImpact');
-    imp.innerHTML = impacts.map(({ f, rows, spread }) => {
-      const maxRate = Math.max(0.01, ...rows.map((r) => r.churners / r.customers));
-      return `<div class="impact ${ex.filters[f.key] ? 'filtered' : ''}">
-        <div class="impact-head"><b>${esc(f.label)}</b><span class="muted">${spread ? `chênh ${fmt.num(spread * 100, 1)} điểm %` : 'không đủ dữ liệu so sánh'}</span></div>
-        ${rows.map((r) => {
-          const rate = r.churners / r.customers;
-          const on = (ex.filters[f.key] || []).includes(r.value);
-          const tiny = r.customers < MIN_GROUP;
-          const delta = rate - selRate;
-          return `<button type="button" class="impact-row ${on ? 'on' : ''} ${tiny ? 'tiny' : ''}" data-f="${esc(f.key)}" data-v="${esc(r.value)}"
-              title="${esc(valueLabel(f.key, r.value))}: ${fmt.int(r.churners)}/${fmt.int(r.customers)} khách đã rời đi">
-            <span class="impact-name">${esc(valueLabel(f.key, r.value))}</span>
-            <span class="impact-bar"><span style="width:${(100 * rate / maxRate).toFixed(1)}%" class="${rate > selRate * 1.2 && !tiny ? 'hot' : ''}"></span></span>
-            <span class="impact-val num">${fmt.pct(rate)}</span>
-            <span class="impact-n num">${tiny ? 'mẫu nhỏ' : fmt.int(r.customers) + ' khách'}</span>
-            <span class="impact-delta num ${delta > 0.005 ? 'up' : delta < -0.005 ? 'down' : ''}">${(delta >= 0 ? '+' : '−') + fmt.num(Math.abs(delta) * 100, 1)}</span>
-          </button>`;
-        }).join('')}
-      </div>`;
-    }).join('');
-    if (impacts[0]) $('#exImpactTitle').textContent = topFree
-      ? `Yếu tố tạo khác biệt lớn nhất lúc này: ${topFree.f.label}`
-      : 'Yếu tố nào tạo khác biệt lớn nhất?';
+    const maxRate = Math.max(0.05, ...ranked.slice(0, TOP_FACTORS).map((i) => i.hi.rate));
+    $('#exTop').innerHTML = ranked.length ? ranked.slice(0, TOP_FACTORS).map((i) => `
+      <div class="tf">
+        <div class="tf-head"><b>${esc(i.f.label)}</b><span class="muted num">chênh ${fmt.num(i.spread * 100, 0)} điểm %</span></div>
+        <div class="tf-track" aria-hidden="true">
+          <span class="tf-line" style="left:${(100 * i.lo.rate / maxRate).toFixed(1)}%;width:${(100 * (i.hi.rate - i.lo.rate) / maxRate).toFixed(1)}%"></span>
+          <span class="tf-dot lo" style="left:${(100 * i.lo.rate / maxRate).toFixed(1)}%"></span>
+          <span class="tf-dot hi" style="left:${(100 * i.hi.rate / maxRate).toFixed(1)}%"></span>
+        </div>
+        <div class="tf-vals">
+          <button type="button" class="tf-v lo" data-f="${esc(i.f.key)}" data-v="${esc(i.lo.value)}">${esc(valueLabel(i.f.key, i.lo.value))} <b class="num">${fmt.pct(i.lo.rate)}</b></button>
+          <button type="button" class="tf-v hi" data-f="${esc(i.f.key)}" data-v="${esc(i.hi.value)}">${esc(valueLabel(i.f.key, i.hi.value))} <b class="num">${fmt.pct(i.hi.rate)}</b></button>
+        </div>
+      </div>`).join('') : '<p class="muted">Nhóm quá nhỏ để so sánh tiếp.</p>';
 
-    drawExploreCharts(d, filtered);
+    drawChurnChart(d, filtered);
+    resizeChartsSoon();
   }
 
-  function drawExploreCharts(d, filtered) {
-    const s1 = css('--series-1'), muted = css('--text-3');
-    const months = d.trend.map((t) => t.year_month);
-    const selName = filtered ? 'Nhóm đang chọn' : 'Toàn công ty';
-    const event = { silent: true, symbol: 'none', lineStyle: { color: muted, type: 'dashed' },
-      label: { formatter: 'Tăng giá Fiber', color: muted, fontSize: 11 }, data: [{ xAxis: '2025-03' }] };
+  // Khung biểu đồ co giãn theo chiều cao còn lại của trang, nên phải đo lại sau khi nội dung phía trên đã vẽ xong.
+  function resizeChartsSoon() { requestAnimationFrame(() => Object.values(state.charts).forEach((c) => c.resize())); }
 
-    const churnSeries = [{ name: selName, type: 'line', data: d.trend.map((t) => (t.sel_customers ? t.sel_churners / t.sel_customers : null)),
-      showSymbol: false, lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 }, markLine: event }];
-    churnSeries.push(filtered
+  function drawChurnChart(d, filtered) {
+    const chart = state.charts['ex-churn'];
+    if (!chart) return;
+    const s1 = css('--series-1'), muted = css('--text-3'), neutral = css('--neutral-mark');
+    const months = d.trend.map((t) => t.year_month);
+    const sel = d.trend.map((t) => (t.sel_customers ? t.sel_churners / t.sel_customers : null));
+    const peakIdx = sel.reduce((bi, v, i) => (v != null && (bi < 0 || v > sel[bi]) ? i : bi), -1);
+    $('#exChartTitle').textContent = filtered ? 'Tỷ lệ rời đi theo tháng: nhóm đang chọn và toàn công ty' : 'Tỷ lệ rời đi theo tháng so với chỉ tiêu';
+    $('#exChartSub').textContent = peakIdx >= 0 ? `Đỉnh ${fmt.pct(sel[peakIdx], 1)} vào ${months[peakIdx]}${months[peakIdx] >= '2025-03' && months[peakIdx] <= '2025-05' ? ', ngay sau đợt tăng giá Fiber' : ''}.` : '';
+    const series = [{ name: filtered ? 'Nhóm đang chọn' : 'Toàn công ty', type: 'line', data: sel, showSymbol: false,
+      lineStyle: { width: 2.5, color: s1 }, itemStyle: { color: s1 }, areaStyle: { color: s1 + '14' },
+      markLine: { silent: true, symbol: 'none', lineStyle: { color: muted, type: 'dashed' },
+        label: { formatter: 'Tăng giá Fiber', color: muted, fontSize: 11, position: 'insideStartTop' }, data: [{ xAxis: '2025-03' }] },
+      markPoint: peakIdx < 0 ? undefined : { symbol: 'circle', symbolSize: 8, itemStyle: { color: s1, borderColor: css('--surface'), borderWidth: 2 },
+        label: { formatter: fmt.pct(sel[peakIdx], 1), position: 'top', color: css('--text'), fontSize: 11, fontWeight: 600 },
+        data: [{ coord: [months[peakIdx], sel[peakIdx]] }] } }];
+    series.push(filtered
       ? { name: 'Toàn công ty', type: 'line', data: d.trend.map((t) => t.all_churners / t.all_customers), showSymbol: false,
-          lineStyle: { width: 2, color: css('--neutral-mark') }, itemStyle: { color: css('--neutral-mark') } }
+          lineStyle: { width: 2, color: neutral }, itemStyle: { color: neutral } }
       : { name: 'Chỉ tiêu', type: 'line', step: 'middle', data: d.trend.map((t) => t.churn_rate_target), showSymbol: false,
           lineStyle: { width: 2, type: 'dashed', color: muted }, itemStyle: { color: muted } });
-    ex.charts['ex-churn'].setOption({
-      legend: { ...baseOption().legend, data: churnSeries.map((s) => s.name) },
+    chart.setOption({
+      legend: { ...baseOption().legend, data: series.map((s) => s.name) },
+      grid: { left: 8, right: 16, top: 34, bottom: 4, containLabel: true },
       xAxis: axis({ type: 'category', data: months, boundaryGap: false }),
-      yAxis: axis({ type: 'value', axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, 1) } }),
+      yAxis: axis({ type: 'value', axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, Math.round(v * 1000) % 10 ? 1 : 0) } }),
       tooltip: { ...baseOption().tooltip, formatter: (ps) => {
         const t = d.trend[ps[0].dataIndex];
         return `<b>${t.year_month}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, p.value == null ? '–' : fmt.pct(p.value, 2))).join('')
-          + (t.sel_customers ? tipRow(null, 'Khách rời đi / trong nhóm', `${fmt.int(t.sel_churners)}/${fmt.int(t.sel_customers)}`) : '');
+          + (t.sel_customers ? tipRow(null, 'Rời đi / khách trong nhóm', `${fmt.int(t.sel_churners)}/${fmt.int(t.sel_customers)}`) : '')
+          + tipRow(null, 'MRR của nhóm', fmt.usd(t.sel_mrr));
       } },
-      series: churnSeries,
-    }, true);
-
-    const mrrSeries = [{ name: selName, type: 'line', data: d.trend.map((t) => t.sel_mrr), showSymbol: false,
-      lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 }, areaStyle: { color: s1 + '1f' }, markLine: event }];
-    if (!filtered) mrrSeries.push({ name: 'Chỉ tiêu', type: 'line', data: d.trend.map((t) => t.mrr_target_usd), showSymbol: false,
-      lineStyle: { width: 2, type: 'dashed', color: muted }, itemStyle: { color: muted } });
-    ex.charts['ex-mrr'].setOption({
-      legend: { ...baseOption().legend, data: mrrSeries.map((s) => s.name) },
-      xAxis: axis({ type: 'category', data: months, boundaryGap: false }),
-      yAxis: axis({ type: 'value', scale: !filtered, axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.usdK(v) } }),
-      tooltip: { ...baseOption().tooltip, formatter: (ps) => {
-        const t = d.trend[ps[0].dataIndex];
-        return `<b>${t.year_month}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, fmt.usd(p.value))).join('')
-          + tipRow(null, 'MRR mất do khách rời đi', fmt.usd(t.sel_mrr_lost)) + (filtered ? tipRow(null, 'Tỷ trọng trong công ty', fmt.pct(t.sel_mrr / t.all_mrr)) : '');
-      } },
-      series: mrrSeries,
-    }, true);
-
-    // Retention: mẫu số ở tháng k = số khách đã đủ k tháng tính tới snapshot.
-    const base = d.retention_base;
-    const ks = d.retention.map((r) => r.k).sort((a, b) => a - b);
-    const curve = ks.map((kk) => {
-      const r = d.retention.find((x) => x.k === kk);
-      const eligible = base.filter((b) => b.max_k >= kk);
-      const allDen = sum(eligible, (b) => b.all_customers), selDen = sum(eligible, (b) => b.sel_customers);
-      return { k: kk, cohorts: eligible.length, all: allDen ? r.all_active / allDen : null, sel: selDen >= MIN_GROUP ? r.sel_active / selDen : null };
-    }).filter((c) => c.cohorts >= MIN_COHORTS);
-    const retSeries = [{ name: selName, type: 'line', data: curve.map((c) => c.sel), showSymbol: false, connectNulls: false,
-      lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 } }];
-    if (filtered) retSeries.push({ name: 'Toàn công ty', type: 'line', data: curve.map((c) => c.all), showSymbol: false,
-      lineStyle: { width: 2, color: css('--neutral-mark') }, itemStyle: { color: css('--neutral-mark') } });
-    ex.charts['ex-retention'].setOption({
-      legend: { ...baseOption().legend, data: retSeries.map((s) => s.name) },
-      grid: { left: 8, right: 16, top: 36, bottom: 28, containLabel: true },
-      xAxis: axis({ type: 'category', data: curve.map((c) => c.k), boundaryGap: false, name: 'Tháng kể từ kỳ cước đầu',
-        nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: muted, fontSize: 11 } }),
-      yAxis: axis({ type: 'value', min: 0, max: 1, axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, 0) } }),
-      tooltip: { ...baseOption().tooltip, formatter: (ps) => `<b>Tháng ${ps[0].axisValue}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, p.value == null ? 'mẫu nhỏ' : fmt.pct(p.value))).join('') },
-      series: retSeries,
-    }, true);
-
-    const tByMonth = Object.fromEntries(d.tickets.map((t) => [t.year_month, t]));
-    const tickSeries = [{ name: selName, type: 'line', showSymbol: false, lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 }, markLine: event,
-      data: d.trend.map((t) => (t.sel_customers ? 100 * ((tByMonth[t.year_month] || {}).sel_billing || 0) / t.sel_customers : null)) }];
-    if (filtered) tickSeries.push({ name: 'Toàn công ty', type: 'line', showSymbol: false, lineStyle: { width: 2, color: css('--neutral-mark') },
-      itemStyle: { color: css('--neutral-mark') }, data: d.trend.map((t) => 100 * ((tByMonth[t.year_month] || {}).all_billing || 0) / t.all_customers) });
-    ex.charts['ex-tickets'].setOption({
-      legend: { ...baseOption().legend, data: tickSeries.map((s) => s.name) },
-      xAxis: axis({ type: 'category', data: months, boundaryGap: false }),
-      yAxis: axis({ type: 'value', min: 0 }),
-      tooltip: { ...baseOption().tooltip, formatter: (ps) => `<b>${months[ps[0].dataIndex]}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, p.value == null ? '–' : fmt.num(p.value, 1) + ' / 100 khách')).join('') },
-      series: tickSeries,
+      series,
     }, true);
   }
 
-  async function openCustomerList() {
-    $('#drawerTitle').textContent = filterSummary();
+  /* Chi tiết đủ 13 yếu tố: mở trong drawer để trang chính luôn gọn. */
+  function openAllFactors() {
+    if (!ex.last) return;
+    openDrawer('Cả 13 yếu tố trong nhóm đang chọn', 'Tỷ lệ đã rời đi (24 tháng) của từng nhánh. Bấm một dòng để thêm vào bộ lọc.');
+    const selRate = ex.last.kpi.sel_customers ? ex.last.kpi.sel_churners / ex.last.kpi.sel_customers : 0;
+    const body = $('#drawerBody');
+    const draw = () => {
+      body.innerHTML = `<div class="impact-grid">${factorImpacts(ex.last).map(({ f, rows, spread }) => {
+        const maxRate = Math.max(0.01, ...rows.map((r) => r.rate));
+        return `<div class="impact ${ex.filters[f.key] ? 'filtered' : ''}">
+          <div class="impact-head"><b>${esc(f.label)}</b><span class="muted">${spread ? `chênh ${fmt.num(spread * 100, 1)} điểm %` : '–'}</span></div>
+          ${rows.map((r) => {
+            const on = (ex.filters[f.key] || []).includes(r.value), tiny = r.customers < MIN_GROUP;
+            return `<button type="button" class="impact-row ${on ? 'on' : ''} ${tiny ? 'tiny' : ''}" data-f="${esc(f.key)}" data-v="${esc(r.value)}">
+              <span class="impact-name">${esc(valueLabel(f.key, r.value))}</span>
+              <span class="impact-bar"><span style="width:${(100 * r.rate / maxRate).toFixed(1)}%" class="${r.rate > selRate * 1.2 && !tiny ? 'hot' : ''}"></span></span>
+              <span class="impact-val num">${fmt.pct(r.rate)}</span>
+              <span class="impact-n num">${tiny ? 'mẫu nhỏ' : fmt.int(r.customers)}</span></button>`;
+          }).join('')}</div>`;
+      }).join('')}</div>`;
+    };
+    body.onclick = (e) => {
+      const r = e.target.closest('[data-f]');
+      if (!r) return;
+      toggleValue(r.dataset.f, r.dataset.v);
+      closeDrawer();
+    };
+    draw();
+  }
+
+  function openDrawer(title, crumb) {
+    $('#drawerTitle').textContent = title;
+    $('#drawerCrumb').textContent = crumb || '';
+    $('#drawerBody').onclick = null;
     $('#drawerBody').innerHTML = '<div class="skeleton"></div>';
     $('#drawer').classList.add('open'); $('#drawerBackdrop').classList.add('open');
     $('#drawer').setAttribute('aria-hidden', 'false');
+  }
+
+  async function openCustomerList() {
+    openDrawer(Object.keys(ex.filters).length ? filterSummary() : 'Toàn công ty', 'Khách đang hoạt động trong nhóm, sắp theo cước giảm dần');
     try {
       const res = await fetch('/api/explore/customers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ex.filters }) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -432,6 +445,13 @@
     } catch (e) {
       $('#drawerBody').innerHTML = `<p class="error">Không tải được danh sách khách: ${esc(e.message)}</p>`;
     }
+  }
+
+  function filterSummary() {
+    return Object.entries(ex.filters).map(([k, vs]) => {
+      const f = ex.catalog.find((c) => c.key === k);
+      return `${f.label}: ${vs.map((v) => valueLabel(k, v)).join(' hoặc ')}`;
+    }).join(' · ');
   }
 
   function renderCustomerTable(rows, limit) {
@@ -478,42 +498,32 @@
     $('#drawer').setAttribute('aria-hidden', 'true');
   }
 
-  /* ---------- Trang 4: What-if ---------- */
+  /* ---------- Trang What-if: vừa 1 màn hình ---------- */
   async function renderWhatif(root) {
     const base = await api('whatif_base');
     const m2m = base.find((b) => b.contract_type === 'Month-to-month');
     const oneY = base.find((b) => b.contract_type === 'One year');
     root.innerHTML = `
-      <div class="grid wide-left">
-        <div class="card">
-          <div class="card-head"><div><h3 class="card-title" id="wf-title">Kịch bản</h3>
-            <div class="card-sub">Số khách còn lại của nhóm được chuyển đổi, theo hai nhịp churn.</div></div></div>
-          <div class="chart tall" id="c-whatif"></div>
+      <div class="headline" id="wfHeadline"></div>
+      <div class="grid kpis4" id="wfKpis"></div>
+      <div class="grid main-split">
+        <div class="card flex-card">
+          <div class="card-head"><div><h3 class="card-title">Số khách còn lại của nhóm được chuyển đổi</h3>
+            <div class="card-sub">Xanh: sau khi chuyển sang hợp đồng 1 năm · Cam: nếu vẫn theo tháng.</div></div></div>
+          <div class="chart fill" id="c-whatif"></div>
         </div>
-        <div class="card">
-          <h3 class="card-title" style="margin-bottom:14px">Tham số</h3>
-          <div class="control"><div class="control-row"><label for="shift">Khách Month-to-month chuyển sang 1 năm</label><output id="shiftOut" class="num"></output></div>
+        <div class="card flex-card">
+          <h3 class="card-title" style="margin-bottom:12px">Tham số</h3>
+          <div class="control"><div class="control-row"><label for="shift">Khách hợp đồng tháng chuyển sang 1 năm</label><output id="shiftOut" class="num"></output></div>
             <input type="range" id="shift" min="0" max="50" step="5" value="20"></div>
-          <div class="control"><div class="control-row"><label for="discount">Chiết khấu cho khách chuyển đổi</label><output id="discountOut" class="num"></output></div>
+          <div class="control"><div class="control-row"><label for="discount">Chiết khấu để thuyết phục</label><output id="discountOut" class="num"></output></div>
             <input type="range" id="discount" min="0" max="30" step="1" value="10"></div>
           <div class="control"><div class="control-row"><label for="horizon">Tầm nhìn</label><output id="horizonOut" class="num"></output></div>
             <input type="range" id="horizon" min="6" max="24" step="6" value="12"></div>
-          <ul class="assumptions">
-            <li>Nhóm chuyển đổi mang churn của One year (${fmt.pct(oneY.monthly_churn_rate, 2)}/tháng) thay vì Month-to-month (${fmt.pct(m2m.monthly_churn_rate, 2)}/tháng).</li>
-            <li>ARPU giữ như Month-to-month (${fmt.usd2(m2m.arpu_usd)}); chiết khấu trừ trên doanh thu của khách chuyển đổi còn ở lại.</li>
-            <li>Chênh lệch tương quan, chưa phải nhân quả, nên đây là cận trên. Công thức trùng sql/analysis/07_whatif_contract.sql.</li>
-          </ul>
+          <p class="assumptions">Rời đi mỗi tháng: theo tháng ${fmt.pct(m2m.monthly_churn_rate, 2)}, hợp đồng 1 năm ${fmt.pct(oneY.monthly_churn_rate, 2)}.
+            ARPU ${fmt.usd2(m2m.arpu_usd)}. Là chênh lệch tương quan nên xem như mức tối đa.</p>
         </div>
-      </div>
-      <div class="grid kpis" id="wf-kpis"></div>
-      <div class="card"><div class="card-head"><div><h3 class="card-title">Số liệu nền theo loại hợp đồng</h3>
-        <div class="card-sub">Khách và MRR tại tháng snapshot; churn theo tháng trong cửa sổ 24 tháng.</div></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Hợp đồng</th><th class="r">Khách đang hoạt động</th><th class="r">MRR hiện tại</th>
-          <th class="r">ARPU</th><th class="r">Churn / tháng</th><th class="r">Rời đi bq / tháng</th><th class="r">MRR mất bq / tháng</th></tr></thead>
-          <tbody>${base.map((b) => `<tr><td>${esc(b.contract_type)}</td><td class="r num">${fmt.int(b.active_customers)}</td>
-            <td class="r num">${fmt.usd(b.current_mrr_usd)}</td><td class="r num">${fmt.usd2(b.arpu_usd)}</td>
-            <td class="r num">${fmt.pct(b.monthly_churn_rate, 2)}</td><td class="r num">${fmt.num(b.avg_churners_per_month, 1)}</td>
-            <td class="r num">${fmt.usd(b.avg_mrr_lost_per_month_usd)}</td></tr>`).join('')}</tbody></table></div></div>`;
+      </div>`;
 
     const s1 = css('--series-1'), s2 = css('--series-2');
     const chart = mountChart('c-whatif', {});
@@ -530,35 +540,33 @@
       const cost = disc * keptRevenue, net = gross - cost;
       const breakEven = keptRevenue ? gross / keptRevenue : 0;
       const extra = move[H] - stay[H];
-      $('#wf-title').textContent = moved
-        ? `Chuyển ${fmt.int(moved)} khách giữ thêm ${fmt.int(Math.round(extra))} khách sau ${H} tháng, lãi ròng ${fmt.usd(net)}`
-        : 'Chọn tỷ lệ chuyển đổi để xem kịch bản';
-      $('#wf-kpis').innerHTML = [
-        kpiCard('Khách được chuyển đổi', fmt.int(moved), `MRR ${fmt.usd(moved * arpu)}`),
-        kpiCard('Khách rời đi tránh được (tháng 1)', fmt.num(moved * (cM - c1), 1), 'mỗi tháng, ở đầu kỳ'),
-        kpiCard(`MRR giữ thêm ở tháng ${H}`, fmt.usd(extra * arpu), `${fmt.int(Math.round(extra))} khách`),
+      $('#wfHeadline').innerHTML = `${ICON.bulb}<span>${moved
+        ? `Chuyển <b>${fmt.int(moved)}</b> khách sang hợp đồng 1 năm với chiết khấu ${fmt.pct(disc, 0)}: sau ${H} tháng giữ thêm <b>${fmt.int(Math.round(extra))} khách</b>, lợi ích ròng <b>${fmt.usd(net)}</b>. Chiết khấu tối đa để hoà vốn: ${fmt.pct(breakEven, 1)}.`
+        : 'Kéo thanh trượt bên phải để xem kịch bản.'}</span>`;
+      $('#wfKpis').innerHTML = [
+        kpiCard('Khách được chuyển đổi', fmt.int(moved), `trên ${fmt.int(m2m.active_customers)} khách hợp đồng tháng`),
+        kpiCard(`MRR giữ thêm ở tháng ${H}`, fmt.usd(extra * arpu), `${fmt.int(Math.round(extra))} khách còn ở lại thêm`),
         kpiCard(`Doanh thu giữ thêm (${H} tháng)`, fmt.usd(gross), `chi phí chiết khấu ${fmt.usd(cost)}`),
-        kpiCard('Lợi ích ròng', fmt.usd(net), `${badge(net >= 0 ? 'good' : 'bad', net >= 0 ? 'Có lãi' : 'Lỗ')} hoà vốn tại chiết khấu ${fmt.pct(breakEven, 1)}`),
+        kpiCard('Lợi ích ròng', fmt.usd(net), `${badge(net >= 0 ? 'good' : 'bad', net >= 0 ? 'Có lãi' : 'Lỗ')} hoà vốn ở chiết khấu ${fmt.pct(breakEven, 1)}`),
       ].join('');
       chart.setOption({
-        legend: { ...baseOption().legend, data: ['Chuyển sang One year', 'Giữ Month-to-month'] },
-        grid: { left: 8, right: 16, top: 36, bottom: 28, containLabel: true },
-        xAxis: axis({ type: 'category', data: ks, boundaryGap: false, name: 'Tháng', nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: css('--text-3'), fontSize: 11 } }),
+        legend: { ...baseOption().legend, data: ['Chuyển sang 1 năm', 'Vẫn theo tháng'] },
+        grid: { left: 8, right: 16, top: 34, bottom: 24, containLabel: true },
+        xAxis: axis({ type: 'category', data: ks, boundaryGap: false, name: 'Tháng', nameLocation: 'middle', nameGap: 24, nameTextStyle: { color: css('--text-3'), fontSize: 11 } }),
         yAxis: axis({ type: 'value', min: 0 }),
-        tooltip: { ...baseOption().tooltip, formatter: (ps) => `<b>Tháng ${ps[0].axisValue}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, fmt.num(p.value, 0) + ' khách')).join('')
-          + tipRow(null, 'Chênh lệch', fmt.num(ps[0].value - (ps[1] ? ps[1].value : 0), 0) + ' khách') },
+        tooltip: { ...baseOption().tooltip, formatter: (ps) => `<b>Tháng ${ps[0].axisValue}</b>` + ps.map((p) => tipRow(p.color, p.seriesName, fmt.num(p.value, 0) + ' khách')).join('') },
         series: [
-          { name: 'Chuyển sang One year', type: 'line', data: move, showSymbol: false, lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 },
-            areaStyle: { color: s1 + '1a' } },
-          { name: 'Giữ Month-to-month', type: 'line', data: stay, showSymbol: false, lineStyle: { width: 2, color: s2 }, itemStyle: { color: s2 } },
+          { name: 'Chuyển sang 1 năm', type: 'line', data: move, showSymbol: false, lineStyle: { width: 2.5, color: s1 }, itemStyle: { color: s1 }, areaStyle: { color: s1 + '14' } },
+          { name: 'Vẫn theo tháng', type: 'line', data: stay, showSymbol: false, lineStyle: { width: 2.5, color: s2 }, itemStyle: { color: s2 } },
         ],
       }, true);
     };
     ['shift', 'discount', 'horizon'].forEach((id) => $('#' + id).addEventListener('input', update));
     update();
+    resizeChartsSoon();
   }
 
-  /* ---------- Trang 5: Data Quality ---------- */
+  /* ---------- Trang Data Quality: trang tra cứu cho đội dữ liệu nên được phép dài; phần đầu vẫn tóm tắt gọn ---------- */
   async function renderQuality(root) {
     const [checks, rejected, steps] = await Promise.all([api('dq_checks'), api('rejected'), api('etl_steps')]);
     const count = (s) => checks.filter((c) => c.status === s).length;
@@ -568,53 +576,40 @@
     const fmtVal = (v) => (v == null ? '–' : fmt.num(v, Number.isInteger(v) ? 0 : 2));
 
     root.innerHTML = `
-      ${insight(`${count('PASS')}/${checks.length} kiểm tra đạt; ${count('WARN')} cảnh báo đã biết, ${count('FAIL')} lỗi cần xử lý.`, [
-        `${fmt.int(totalRejected)} bản ghi bị loại, có lý do và JSON gốc trong clean.rejected_records; không xoá im lặng.`,
-        ...checks.filter((c) => c.status === 'WARN').map((c) => `${esc(c.check_name)}: ${esc(c.note || '')}`),
-      ])}
-      <div class="grid kpis">
-        ${kpiCard('Đạt', `<span class="status PASS">${count('PASS')}</span>`, 'kiểm tra PASS')}
-        ${kpiCard('Cảnh báo', `<span class="status WARN">${count('WARN')}</span>`, 'lệch đã biết, đã xử lý')}
-        ${kpiCard('Lỗi', `<span class="status FAIL">${count('FAIL')}</span>`, 'cần điều tra')}
+      <div class="headline">${ICON.bulb}<span><b>${count('PASS')}/${checks.length}</b> kiểm tra đạt, <b>${count('FAIL')}</b> lỗi cần xử lý.
+        ${count('WARN') ? `${count('WARN')} cảnh báo là tháng 2024-08 hệ thống billing sự cố, đã được ước lượng bù.` : ''}
+        ${fmt.int(totalRejected)} bản ghi lỗi được tách riêng kèm lý do, không xoá im lặng.</span></div>
+      <div class="grid kpis4">
+        ${kpiCard('Kiểm tra đạt', `<span class="status PASS">${count('PASS')}</span>`, `trên ${checks.length} kiểm tra`)}
+        ${kpiCard('Cảnh báo / Lỗi', `<span class="status WARN">${count('WARN')}</span> <span class="status FAIL">${count('FAIL')}</span>`, 'cảnh báo đã biết · lỗi cần điều tra')}
         ${kpiCard('Bản ghi bị loại', fmt.int(totalRejected), `${rejected.length} loại lý do`)}
-        ${kpiCard('Lần chạy ETL gần nhất', pipeline ? fmt.num(pipeline.duration_ms / 1000, 1) + ' giây' : '–',
+        ${kpiCard('Lần chạy ETL gần nhất', pipeline ? fmt.num(pipeline.duration_ms / 1000, 0) + ' giây' : '–',
           pipeline ? esc(new Date(pipeline.finished_at).toLocaleString('vi-VN')) : '')}
       </div>
-      <div class="card"><div class="card-head"><div><h3 class="card-title">Kết quả kiểm tra</h3>
-        <div class="card-sub">Trước = đo trên stg (dữ liệu gốc) · Sau = đo trên clean/mart · Loại = số dòng chuyển sang rejected</div></div></div>
+      <div class="card"><div class="card-head"><div><h3 class="card-title">Kết quả ${checks.length} kiểm tra</h3>
+        <div class="card-sub">Trước = đo trên dữ liệu gốc (stg) · Sau = đo trên dữ liệu đã làm sạch (clean/mart) · Loại = số dòng tách sang rejected</div></div></div>
         <div class="table-wrap" style="max-height:none"><table><thead><tr><th>Trạng thái</th><th>Kiểm tra</th><th>Đối tượng</th>
           <th class="r">Trước</th><th class="r">Sau</th><th class="r">Loại</th><th>Ghi chú</th></tr></thead>
           <tbody>${groups.map((g) => `<tr><td colspan="7" style="background:var(--surface-2);font-weight:600">${esc(g)}</td></tr>` +
-            checks.filter((c) => c.check_group === g).map((c) => `<tr>
-              <td><span class="status ${c.status}">${c.status}</span></td><td class="wrap">${esc(c.check_name)}</td>
-              <td class="wrap muted">${esc(c.object_name || '')}</td><td class="r num">${fmtVal(c.value_before)}</td>
-              <td class="r num">${fmtVal(c.value_after)}</td><td class="r num">${fmtVal(c.value_rejected)}</td>
-              <td class="wrap muted">${esc(c.note || c.expected_rule || '')}</td></tr>`).join('')).join('')}
+            checks.filter((c) => c.check_group === g).map((c) => `<tr><td><span class="status ${c.status}">${c.status}</span></td>
+              <td class="wrap">${esc(c.check_name)}</td><td class="wrap muted">${esc(c.object_name || '')}</td>
+              <td class="r num">${fmtVal(c.value_before)}</td><td class="r num">${fmtVal(c.value_after)}</td>
+              <td class="r num">${fmtVal(c.value_rejected)}</td><td class="wrap muted">${esc(c.note || c.expected_rule || '')}</td></tr>`).join('')).join('')}
           </tbody></table></div></div>
       <div class="grid two">
-        ${cardHtml('c-rej', `${fmt.int(totalRejected)} bản ghi bị loại theo lý do`, 'Bảng nguồn · mã lý do', 'short')}
+        <div class="card"><div class="card-head"><div><h3 class="card-title">Bản ghi bị loại theo lý do</h3>
+          <div class="card-sub">Lưu trong clean.rejected_records kèm nguyên dòng gốc (JSON)</div></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Bảng nguồn</th><th>Lý do</th><th class="r">Số dòng</th><th>Ví dụ</th></tr></thead>
+            <tbody>${rejected.map((r) => `<tr><td>${esc(r.source_table)}</td><td>${esc(r.reason_code)}</td>
+              <td class="r num">${fmt.int(r.rejected_rows)}</td><td class="wrap muted">${esc(r.sample_detail)}</td></tr>`).join('')}</tbody></table></div></div>
         <div class="card"><div class="card-head"><div><h3 class="card-title">Các bước ETL của lần chạy gần nhất</h3>
           <div class="card-sub">Từ dbo.etl_log</div></div></div>
-          <div class="table-wrap" style="max-height:260px"><table><thead><tr><th>Bước</th><th>Trạng thái</th><th class="r">Đọc</th><th class="r">Ghi</th><th class="r">Thời gian</th></tr></thead>
+          <div class="table-wrap"><table><thead><tr><th>Bước</th><th>Trạng thái</th><th class="r">Đọc</th><th class="r">Ghi</th><th class="r">Thời gian</th></tr></thead>
             <tbody>${steps.filter((s) => s.layer !== 'pipeline').map((s) => `<tr><td>${esc(s.step_name)}</td>
               <td><span class="status ${s.status === 'SUCCESS' ? 'PASS' : 'FAIL'}">${esc(s.status)}</span></td>
               <td class="r num">${s.rows_read == null ? '–' : fmt.int(s.rows_read)}</td><td class="r num">${s.rows_written == null ? '–' : fmt.int(s.rows_written)}</td>
               <td class="r num">${fmt.num(s.duration_ms / 1000, 1)} s</td></tr>`).join('')}</tbody></table></div></div>
       </div>`;
-
-    const rj = rejected.slice().reverse();
-    mountChart('c-rej', {
-      grid: { left: 8, right: 40, top: 8, bottom: 4, containLabel: true },
-      xAxis: axis({ type: 'value', axisLabel: { show: false }, splitLine: { show: false } }),
-      yAxis: axis({ type: 'category', data: rj.map((r) => `${r.source_table.replace('stg.', '')} · ${r.reason_code}`), axisLine: { show: false },
-        axisLabel: { ...axis().axisLabel, color: css('--text-2') } }),
-      tooltip: { ...baseOption().tooltip, trigger: 'item', formatter: (p) => {
-        const r = rj[p.dataIndex];
-        return `<b>${esc(r.reason_code)}</b>${tipRow(null, 'Bảng', esc(r.source_table))}${tipRow(null, 'Số dòng', fmt.int(r.rejected_rows))}<div style="max-width:260px;white-space:normal">${esc(r.sample_detail)}</div>`;
-      } },
-      series: [{ type: 'bar', barMaxWidth: 16, data: rj.map((r) => r.rejected_rows), itemStyle: { color: css('--series-1'), borderRadius: [0, 4, 4, 0] },
-        label: { show: true, position: 'right', fontSize: 11, color: css('--text-2'), formatter: (p) => fmt.int(p.value) } }],
-    });
   }
 
   /* ---------- điều hướng, theme, khởi động ---------- */
@@ -624,10 +619,12 @@
     const def = PAGES[page];
     document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.page === page));
     document.querySelectorAll('.page').forEach((p) => p.classList.toggle('active', p.id === 'page-' + page));
+    $('#page-' + page).classList.toggle('fit', !!def.fit);
     $('#pageTitle').textContent = def.title; $('#crumb').textContent = def.crumb;
     document.title = `${def.title} · Telco Churn Analytics`;
     $('#sidebar').classList.remove('open');
     closeDrawer();
+    closePopover();
     disposeCharts();
     const root = $('#page-' + page);
     root.innerHTML = '<div class="skeleton"></div>';
@@ -662,11 +659,15 @@
   $('#menuBtn').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
   $('#drawerClose').addEventListener('click', closeDrawer);
   $('#drawerBackdrop').addEventListener('click', closeDrawer);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDrawer(); closePopover(); } });
   // Bộ lọc của trang Khám phá nằm sau dấu ? trong hash; chỉ vẽ lại trang khi đổi trang.
   const pageFromHash = () => location.hash.slice(1).split('?')[0];
   window.addEventListener('hashchange', () => { if (pageFromHash() !== state.page) show(pageFromHash()); });
-  window.addEventListener('resize', () => Object.values(state.charts).forEach((c) => c.resize()));
+  const resizeCharts = () => Object.values(state.charts).forEach((c) => c.resize());
+  window.addEventListener('resize', resizeCharts);
+  // Khi in, khung trang đổi kích thước (ẩn sidebar, khổ A4) nên biểu đồ phải vẽ lại theo khung mới.
+  window.addEventListener('beforeprint', resizeCharts);
+  window.addEventListener('afterprint', resizeCharts);
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => show(state.page));
 
   loadMeta();
