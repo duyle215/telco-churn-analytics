@@ -198,7 +198,7 @@
         </div>
         ${viz('ex-contract', 'Rời đi theo loại hợp đồng', 'v-b1')}
         ${viz('ex-tenure', 'Rời đi theo thời gian gắn bó', 'v-b2')}
-        ${viz('ex-internet', 'Rời đi theo loại internet', 'v-b3')}
+        ${viz('ex-internet', 'Khách rời đi đến từ đâu', 'v-b3')}
       </div>`;
     ['ex-churn', 'ex-mrr', 'ex-contract', 'ex-tenure', 'ex-internet'].forEach((id) => mountChart(id, {}));
     // Lọc chéo kiểu Power BI: bấm một cột để lọc theo giá trị đó, bấm lại để bỏ.
@@ -415,7 +415,7 @@
     drawMrrChart(d, filtered);
     drawFactorBars(d, 'ex-contract', 'contract', allRate, 'h');
     drawFactorBars(d, 'ex-tenure', 'tenure', allRate, 'v');
-    drawFactorBars(d, 'ex-internet', 'internet', allRate, 'h');
+    drawChurnMixDonut(d, 'ex-internet', 'internet');
     resizeChartsSoon();
   }
 
@@ -480,6 +480,40 @@
           + tipRow(null, 'MRR mất do khách rời đi', fmt.usd(t.sel_mrr_lost));
       } },
       series,
+    }, true);
+  }
+
+  /* Donut cơ cấu: khách rời đi đến từ đâu (bổ sung cho các biểu đồ tỷ lệ). Màu gắn cố định với từng loại internet. */
+  function drawChurnMixDonut(d, id, key) {
+    const chart = state.charts[id];
+    if (!chart) return;
+    const color = { 'Fiber optic': css('--series-1'), 'DSL': css('--series-2'), 'No': css('--series-3') };
+    const rows = d.breakdown.filter((b) => b.factor_key === key).sort((a, b) => a.value_sort - b.value_sort);
+    const total = sum(rows, (r) => r.churners);
+    const chosen = ex.filters[key] || [];
+    const top = rows.reduce((a, r) => (!a || r.churners > a.churners ? r : a), null);
+    $(`#${id}-hint`).textContent = top && total ? `${valueLabel(key, top.value)} chiếm ${fmt.pct(top.churners / total, 0)}` : '';
+    chart.setOption({
+      tooltip: { ...baseOption().tooltip, trigger: 'item', formatter: (p) => {
+        const r = p.data.row;
+        return `<b>${esc(p.name)}</b>${tipRow(p.color, 'Khách rời đi', `${fmt.int(r.churners)} (${fmt.pct(p.percent / 100)})`)}
+          ${tipRow(null, 'Tỷ lệ rời đi', fmt.pct(r.churners / r.customers))}${tipRow(null, 'Khách', fmt.int(r.customers))}
+          <div style="color:${css('--text-3')};margin-top:4px">${chosen.includes(p.data.raw) ? 'Bấm để bỏ lọc' : 'Bấm để lọc'}</div>`;
+      } },
+      legend: { show: false },
+      graphic: [{ type: 'text', left: 'center', top: '40%', silent: true,
+        style: { text: fmt.int(total), fill: css('--text'), font: '600 18px Inter, system-ui, sans-serif', textAlign: 'center' } },
+        { type: 'text', left: 'center', top: '53%', silent: true,
+        style: { text: 'khách rời đi', fill: css('--text-3'), font: '11px Inter, system-ui, sans-serif', textAlign: 'center' } }],
+      series: [{ type: 'pie', radius: ['52%', '78%'], center: ['50%', '50%'], cursor: 'pointer', avoidLabelOverlap: true,
+        itemStyle: { borderColor: css('--surface'), borderWidth: 2, borderRadius: 3 },
+        label: { formatter: (p) => `${p.name}\n${fmt.pct(p.percent / 100, 0)}`, fontSize: 11, color: css('--text-2'), lineHeight: 14 },
+        labelLine: { length: 6, length2: 6 },
+        data: rows.filter((r) => r.churners > 0).map((r) => {
+          const on = chosen.includes(r.value);
+          return { name: valueLabel(key, r.value).replace('Không dùng internet', 'Không internet'), value: r.churners, raw: r.value, row: r,
+            itemStyle: { color: color[r.value], opacity: chosen.length && !on ? 0.3 : 1 } };
+        }) }],
     }, true);
   }
 

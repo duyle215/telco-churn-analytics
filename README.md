@@ -134,7 +134,7 @@ Cần thử nghiệm A/B có nhóm đối chứng trước khi triển khai rộ
 Web app Flask + ECharts thay cho Power BI. Hai trang chính vừa **một màn hình** (khung tham chiếu: 1 trang A4 ngang):
 nhiều hình nhỏ, ít chữ; chi tiết chỉ mở khi cần.
 
-- **Khám phá churn** (kiểu trang báo cáo Power BI): 5 KPI có sparkline, xu hướng tỷ lệ rời đi và MRR, 3 biểu đồ cột lọc chéo (bấm cột để lọc, bấm lại để bỏ), panel xếp hạng 13 yếu tố. Bật/tắt yếu tố hoặc chọn góc nhìn có sẵn, mọi hình tính lại ngay theo nhóm đang chọn và luôn so với toàn công ty. Có danh sách khách xuất CSV.
+- **Khám phá churn** (kiểu trang báo cáo Power BI): 5 KPI có sparkline, xu hướng tỷ lệ rời đi và MRR, 2 biểu đồ cột và 1 donut cơ cấu "khách rời đi đến từ đâu", đều lọc chéo (bấm để lọc, bấm lại để bỏ), panel xếp hạng 13 yếu tố. Bật/tắt yếu tố hoặc chọn góc nhìn có sẵn, mọi hình tính lại ngay theo nhóm đang chọn và luôn so với toàn công ty. Có danh sách khách xuất CSV.
 - **What-if Scenario:** thanh trượt tỷ lệ chuyển hợp đồng, chiết khấu, tầm nhìn.
 - **Data Quality:** trang tra cứu cho đội dữ liệu, gồm 26 kiểm tra, bản ghi bị loại và các bước ETL.
 

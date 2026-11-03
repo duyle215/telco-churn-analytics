@@ -29,11 +29,12 @@ Bố cục kiểu trang báo cáo Power BI: một lưới nhiều hình nhỏ, �
 │ 1 dòng tóm tắt tự sinh                                                                                        │
 ├ KPI+sparkline: Khách │ Đã rời đi 24 th │ Rời đi tháng gần nhất │ MRR tháng gần nhất │ MRR dự kiến mất/tháng ┤
 ├ Tỷ lệ rời đi theo tháng (đường)      │ MRR theo tháng (cột)          │ Yếu tố tác động mạnh nhất       ┤
-├ Rời đi theo hợp đồng │ theo gắn bó   │ theo loại internet            │ (Đang lọc ✕ · ô ▲/▼ · cuộn dọc) ┘
+├ Rời đi theo hợp đồng │ theo gắn bó   │ Donut: khách rời đi đến từ đâu │ (Đang lọc ✕ · ô ▲/▼ · cuộn dọc) ┘
 ```
 
 - **Lọc:** thanh lọc một hàng, không thanh cuộn (6 yếu tố chính + "Khác"). Cùng một yếu tố chọn nhiều giá trị là HOẶC, khác yếu tố là VÀ. Bảng chọn hiện sẵn số khách và tỷ lệ rời đi của từng lựa chọn. Bộ lọc lưu trên URL.
-- **Lọc chéo như Power BI:** bấm một cột trong 3 biểu đồ hợp đồng / gắn bó / internet để lọc theo giá trị đó, bấm lại để bỏ. Cột đang chọn tô đậm, cột khác làm mờ; đường đứt nét là mức rời đi chung của công ty.
+- **Hai loại câu hỏi:** các biểu đồ cột trả lời *nhóm nào rời đi với tỷ lệ cao*; donut trả lời *khách rời đi đến từ đâu* (cơ cấu). Ví dụ Fiber rời đi 41,9% nhưng chiếm 69% tổng số khách rời đi, vì vừa rời đi nhiều vừa đông khách.
+- **Lọc chéo như Power BI:** bấm một cột (hợp đồng, gắn bó) hoặc một lát donut (internet) để lọc theo giá trị đó, bấm lại để bỏ. Cột đang chọn tô đậm, cột khác làm mờ; đường đứt nét là mức rời đi chung của công ty.
 - **Bỏ chọn ở mọi nơi:** ✕ trên thanh lọc, bỏ tick trong bảng chọn, bấm lại cột đậm, hoặc ✕ ở hàng "Đang lọc" trong panel.
 - **5 thẻ KPI có sparkline 24 tháng** và so sánh với tháng trước (đỏ là xấu đi, xanh là tốt lên).
 - **Panel yếu tố tác động mạnh nhất:** mọi yếu tố xếp từ mạnh đến yếu, cuộn dọc trong panel. Mỗi yếu tố có ô ▲ nhánh rời đi nhiều nhất và ô ▼ ít nhất, bấm để lọc. Không xếp hạng nhánh dưới 30 khách (nhóm quá nhỏ thì hạ xuống 5 khách và gắn nhãn "Mẫu nhỏ"); bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet.
