@@ -8,7 +8,6 @@ import json
 
 from src import config, db
 
-CUSTOMER_LIST_LIMIT = 1000
 EXPLORE_RESULT_SETS = ["kpi", "breakdown", "trend", "tickets", "retention", "retention_base"]
 
 
@@ -55,9 +54,38 @@ def explore(filters: dict[str, list[str]]) -> dict:
     return data
 
 
-def customers(filters: dict[str, list[str]]) -> list[dict]:
-    return _call("EXEC mart.usp_explore_customers @filters = ?, @limit = ?",
-                 (_to_json_param(filters), CUSTOMER_LIST_LIMIT))[0]
+QUICK_FILTERS = {"mrr", "bill", "late", "notech", "new"}
+SORT_KEYS = {"customer_id", "contract_type", "internet_service", "payment_method", "tech_support", "tenure_months",
+             "current_mrr_usd", "tickets", "billing_tickets", "late_payment_rate", "addon_count"}
+PAGE_SIZE_MAX = 200
+
+
+def validate_list_params(body: dict) -> dict:
+    """Tham số danh sách khách: chỉ nhận giá trị trong danh sách cho phép (proc dùng chúng trong CASE, không SQL động)."""
+    quick = sorted({str(q) for q in body.get("quick", [])})
+    if not set(quick) <= QUICK_FILTERS:
+        raise FilterError(f"Bộ lọc nhanh không hợp lệ: {sorted(set(quick) - QUICK_FILTERS)}")
+    sort_key = body.get("sort", "current_mrr_usd")
+    if sort_key not in SORT_KEYS:
+        raise FilterError(f"Không sắp xếp được theo cột: {sort_key}")
+    try:
+        page, page_size = int(body.get("page", 0)), int(body.get("page_size", 50))
+    except (TypeError, ValueError) as exc:
+        raise FilterError("page/page_size phải là số") from exc
+    if page < 0 or not 0 < page_size <= PAGE_SIZE_MAX:
+        raise FilterError(f"page >= 0 và 0 < page_size <= {PAGE_SIZE_MAX}")
+    return {"quick": quick, "search": str(body.get("search", ""))[:50], "sort": sort_key,
+            "desc": bool(body.get("desc", True)), "page": page, "page_size": page_size}
+
+
+def customers(filters: dict[str, list[str]], params: dict, export: bool = False) -> dict:
+    """Một trang danh sách (hoặc toàn bộ dòng khớp khi export) + tổng số, tính hoàn toàn ở SQL Server."""
+    meta, rows = _call(
+        "EXEC mart.usp_explore_customers @filters = ?, @quick = ?, @search = ?, @sort_key = ?, "
+        "@sort_desc = ?, @page = ?, @page_size = ?",
+        (_to_json_param(filters), json.dumps(params["quick"]), params["search"] or None, params["sort"],
+         1 if params["desc"] else 0, 0 if export else params["page"], 0 if export else params["page_size"]))
+    return {**meta[0], "page": params["page"], "page_size": params["page_size"], "rows": rows}
 
 
 def _call(sql: str, params: tuple = ()) -> list[list[dict]]:

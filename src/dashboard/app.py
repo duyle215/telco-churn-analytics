@@ -5,12 +5,14 @@ Chạy:  python -m src.dashboard.app   rồi mở http://127.0.0.1:5000
 Tầng này không tự tính chỉ số; mọi phép tính nằm trong SQL (view mart, src/dashboard/explore.py).
 Mô phỏng what-if ở frontend dùng đúng công thức của sql/analysis/07_whatif_contract.sql.
 """
+import csv
+import io
 import json
 import threading
 import time
 from collections import OrderedDict
 
-from flask import Flask, abort, jsonify, render_template, request
+from flask import Flask, Response, abort, jsonify, render_template, request
 
 from src import config, db
 from src.dashboard import explore
@@ -124,10 +126,37 @@ def explore_data():
 
 @app.post("/api/explore/customers")
 def explore_customers():
-    filters = _request_filters()
-    key = ("customers", json.dumps(filters, sort_keys=True))
-    rows = cache.get(key, lambda: explore.customers(filters))
-    return jsonify({"limit": explore.CUSTOMER_LIST_LIMIT, "rows": rows})
+    """Một trang danh sách khách: lọc / tìm / sắp xếp / chia trang đều chạy trong SQL, trả về đúng 1 trang."""
+    filters, params = _request_filters(), _list_params()
+    key = ("customers", json.dumps(filters, sort_keys=True), json.dumps(params, sort_keys=True))
+    return jsonify(cache.get(key, lambda: explore.customers(filters, params)))
+
+
+CSV_COLUMNS = [("customer_id", "Mã khách"), ("contract_type", "Hợp đồng"), ("internet_service", "Internet"),
+               ("tenure_months", "Gắn bó (tháng)"), ("current_mrr_usd", "Cước/tháng (USD)"),
+               ("billing_tickets", "Khiếu nại hoá đơn"), ("tickets", "Ticket"), ("late_payment_rate", "Tỷ lệ trả trễ"),
+               ("tech_support", "Hỗ trợ KT"), ("addon_count", "Dịch vụ kèm"), ("payment_method", "Thanh toán")]
+
+
+@app.post("/api/explore/customers.csv")
+def explore_customers_csv():
+    """File CSV do server tạo: đúng những khách đang khớp bộ lọc, không giới hạn theo trang."""
+    filters, params = _request_filters(), _list_params()
+    rows = explore.customers(filters, params, export=True)["rows"]
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow([label for _, label in CSV_COLUMNS])
+    writer.writerows([[r[k] for k, _ in CSV_COLUMNS] for r in rows])
+    # BOM để Excel mở đúng tiếng Việt.
+    return Response("\ufeff" + out.getvalue(), content_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f"attachment; filename=khach_can_cham_soc_{len(rows)}.csv"})
+
+
+def _list_params() -> dict:
+    try:
+        return explore.validate_list_params(request.get_json(silent=True) or {})
+    except explore.FilterError as exc:
+        abort(400, str(exc))
 
 
 @app.get("/api/<name>")

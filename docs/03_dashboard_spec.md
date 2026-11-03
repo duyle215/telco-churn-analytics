@@ -38,7 +38,7 @@ Bố cục kiểu trang báo cáo Power BI: một lưới nhiều hình nhỏ, �
 - **Bỏ chọn ở mọi nơi:** ✕ trên thanh lọc, bỏ tick trong bảng chọn, bấm lại cột đậm, hoặc ✕ ở hàng "Đang lọc" trong panel.
 - **5 thẻ KPI cùng một khuôn** (Khách đang có, Tỷ lệ rời đi, MRR, MRR mất do rời đi, ARPU): giá trị là tháng gần nhất; nhãn là thay đổi so với tháng trước, màu theo ý nghĩa (khách/MRR/ARPU tăng là tốt, tỷ lệ rời đi/MRR mất tăng là xấu); sparkline 24 tháng của chính chỉ số đó; dòng chân so với toàn công ty khi đang lọc, hoặc với chỉ tiêu/bình quân khi xem toàn công ty.
 - **Panel yếu tố tác động mạnh nhất:** mọi yếu tố xếp từ mạnh đến yếu, cuộn dọc trong panel. Mỗi yếu tố có ô ▲ nhánh rời đi nhiều nhất và ô ▼ ít nhất, bấm để lọc. Không xếp hạng nhánh dưới 30 khách (nhóm quá nhỏ thì hạ xuống 5 khách và gắn nhãn "Mẫu nhỏ"); bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet.
-- **Chi tiết khi cần:** hai nút ở chân panel: "Danh sách khách" (khách đang hoạt động trong nhóm; tìm kiếm, sắp xếp, xuất CSV) và "Mọi nhánh" (đủ 13 yếu tố).
+- **Danh sách khách và CSV dùng lại đúng bộ lọc trang:** nút "Xem & tải CSV" trên thanh lọc mở khung xem trước (khách đang hoạt động theo bộ lọc trang). Trong khung có thể thu hẹp thêm bằng lọc nhanh (cước cao top 25%, có khiếu nại hoá đơn, hay trả trễ ≥ 20%, không hỗ trợ KT, khách năm đầu), tìm mã, sắp xếp, chuyển trang; nút "Tải CSV n khách" xuất đúng những dòng đang khớp. Lọc, phân loại, sắp xếp, chia trang (`OFFSET/FETCH`) và tạo CSV đều chạy ở server (`mart.usp_explore_customers`); trình duyệt chỉ gửi tham số qua AJAX và nhận về một trang 50 dòng. Nút "Xem mọi nhánh của từng yếu tố" ở chân panel mở đủ 13 yếu tố.
 
 ## 3. Mỗi hình trả lời một câu hỏi
 
@@ -74,6 +74,7 @@ Mỗi lần đổi bộ lọc chỉ gọi **1 stored procedure, 1 round-trip** (
 | Bảng cầu nối `mart.customer_factor` (khách × yếu tố × giá trị) | Bộ lọc tuỳ ý chỉ là một phép join với bảng bộ lọc; tác động của 13 yếu tố tính trong một lần gom nhóm thay vì 13 truy vấn |
 | `mart.customer_snapshot` (bản vật lý hoá của view hồ sơ khách) | View phải gom 228 nghìn dòng fact mỗi lần đọc (~2-3 giây); bảng snapshot nạp một lần mỗi batch ETL |
 | Columnstore index trên `fact_billing`, `fact_tickets`, `customer_factor` | Batch mode: bước tính tác động giảm từ 260 ms xuống 35 ms |
+| Danh sách khách phân trang ở server (`OFFSET/FETCH`), sắp xếp bằng `CASE` trên danh sách cột cho phép, CSV do server tạo | Mỗi lần chỉ trả 50 dòng thay vì cả nhóm (tới ~5.200 dòng, 1,4 MB); không SQL động |
 | Cache phía server theo batch ETL + bộ lọc | Bộ lọc đã từng xem trả về ngay (~2 ms); chạy lại ETL là cache tự làm mới |
 | Gộp các cú bấm liên tiếp (120 ms) và huỷ request cũ (`AbortController`) | Bấm nhanh nhiều lựa chọn không tạo hàng loạt request |
 

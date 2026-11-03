@@ -121,7 +121,20 @@ BEGIN
 END
 GO
 
-CREATE OR ALTER PROCEDURE mart.usp_explore_customers @filters NVARCHAR(MAX) = N'[]', @limit INT = 1000
+/*
+  Danh sách khách cần chăm sóc: lọc, phân loại, tìm, sắp xếp và chia trang đều làm ở server.
+  Trả về 2 result set: (1) tổng số khách trong nhóm, số khách khớp, ngưỡng "cước cao";
+  (2) đúng một trang dữ liệu. Không SQL động: cột sắp xếp chọn bằng CASE trên danh sách cố định.
+  @page_size = 0 nghĩa là lấy hết các dòng khớp (dùng cho xuất CSV).
+*/
+CREATE OR ALTER PROCEDURE mart.usp_explore_customers
+    @filters    NVARCHAR(MAX) = N'[]',
+    @quick      NVARCHAR(MAX) = N'[]',
+    @search     NVARCHAR(50)  = NULL,
+    @sort_key   VARCHAR(30)   = 'current_mrr_usd',
+    @sort_desc  BIT           = 1,
+    @page       INT           = 0,
+    @page_size  INT           = 50
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -132,15 +145,61 @@ BEGIN
     WHERE j.factor_key IS NOT NULL AND j.value IS NOT NULL;
     DECLARE @filtered_factors INT = (SELECT COUNT(DISTINCT factor_key) FROM #f);
 
-    SELECT TOP (@limit) s.customer_id, s.contract_type, s.internet_service, s.payment_method, s.tenure_months,
+    DECLARE @q TABLE (k VARCHAR(20) PRIMARY KEY);
+    INSERT INTO @q (k) SELECT DISTINCT CAST(value AS VARCHAR(20)) FROM OPENJSON(@quick);
+
+    -- Nhóm khách theo bộ lọc của trang Khám phá (cùng logic với mart.usp_explore).
+    SELECT s.customer_id, s.contract_type, s.internet_service, s.payment_method, s.tenure_months,
            s.current_mrr_usd, s.tickets, s.billing_tickets, s.late_payment_rate, s.tech_support, s.addon_count
+    INTO #g
     FROM mart.customer_snapshot s
     LEFT JOIN (SELECT cf.customer_key, COUNT(*) AS matched
                FROM mart.customer_factor cf
                JOIN #f f ON f.factor_key = cf.factor_key AND f.value = cf.value
                GROUP BY cf.customer_key) mt ON mt.customer_key = s.customer_key
     WHERE s.in_analysis_window = 1 AND s.customer_status = N'Active'
-      AND ISNULL(mt.matched, 0) = @filtered_factors
-    ORDER BY s.current_mrr_usd DESC, s.tickets DESC;
+      AND ISNULL(mt.matched, 0) = @filtered_factors;
+
+    -- Phân loại "cước cao" = top 25% cước trong chính nhóm đang xem, nên ngưỡng đổi theo bộ lọc trang.
+    DECLARE @mrr_p75 DECIMAL(10,2) =
+        (SELECT TOP (1) PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY current_mrr_usd) OVER () FROM #g);
+
+    SELECT *
+    INTO #v
+    FROM #g
+    WHERE (NULLIF(@search, N'') IS NULL OR CHARINDEX(UPPER(@search), UPPER(customer_id)) > 0)
+      AND (NOT EXISTS (SELECT 1 FROM @q WHERE k = 'mrr')    OR current_mrr_usd >= @mrr_p75)
+      AND (NOT EXISTS (SELECT 1 FROM @q WHERE k = 'bill')   OR billing_tickets > 0)
+      AND (NOT EXISTS (SELECT 1 FROM @q WHERE k = 'late')   OR late_payment_rate >= 0.2)
+      AND (NOT EXISTS (SELECT 1 FROM @q WHERE k = 'notech') OR tech_support = N'No')
+      AND (NOT EXISTS (SELECT 1 FROM @q WHERE k = 'new')    OR tenure_months <= 12);
+
+    SELECT (SELECT COUNT(*) FROM #g) AS group_total, (SELECT COUNT(*) FROM #v) AS matched, @mrr_p75 AS mrr_p75;
+
+    DECLARE @take INT = CASE WHEN @page_size > 0 THEN @page_size ELSE 2147483647 END;
+    DECLARE @skip INT = CASE WHEN @page_size > 0 THEN @page * @page_size ELSE 0 END;
+    SELECT customer_id, contract_type, internet_service, payment_method, tenure_months, current_mrr_usd,
+           tickets, billing_tickets, late_payment_rate, tech_support, addon_count
+    FROM #v
+    ORDER BY
+        -- Cột số và cột chữ tách thành hai CASE để không bị ép kiểu lẫn nhau.
+        CASE WHEN @sort_desc = 1 THEN CASE @sort_key
+            WHEN 'current_mrr_usd' THEN current_mrr_usd WHEN 'tenure_months' THEN tenure_months
+            WHEN 'billing_tickets' THEN billing_tickets WHEN 'tickets' THEN tickets
+            WHEN 'late_payment_rate' THEN late_payment_rate WHEN 'addon_count' THEN addon_count END END DESC,
+        CASE WHEN @sort_desc = 0 THEN CASE @sort_key
+            WHEN 'current_mrr_usd' THEN current_mrr_usd WHEN 'tenure_months' THEN tenure_months
+            WHEN 'billing_tickets' THEN billing_tickets WHEN 'tickets' THEN tickets
+            WHEN 'late_payment_rate' THEN late_payment_rate WHEN 'addon_count' THEN addon_count END END ASC,
+        CASE WHEN @sort_desc = 1 THEN CASE @sort_key
+            WHEN 'customer_id' THEN customer_id WHEN 'contract_type' THEN contract_type
+            WHEN 'internet_service' THEN internet_service WHEN 'tech_support' THEN tech_support
+            WHEN 'payment_method' THEN payment_method END END DESC,
+        CASE WHEN @sort_desc = 0 THEN CASE @sort_key
+            WHEN 'customer_id' THEN customer_id WHEN 'contract_type' THEN contract_type
+            WHEN 'internet_service' THEN internet_service WHEN 'tech_support' THEN tech_support
+            WHEN 'payment_method' THEN payment_method END END ASC,
+        customer_id
+    OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;
 END
 GO

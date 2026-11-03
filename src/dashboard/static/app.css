@@ -501,3 +501,16 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .panel-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; flex: none; }
 .panel-actions .btn { justify-content: center; padding: 5px 10px; }
 .kpi-spark .kpi-foot { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+
+/* Danh sách khách cần chăm sóc */
+.cl-context { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
+.cl-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.cl-table { max-height: calc(100vh - 290px); }
+.cl-pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.cl-pager .muted { margin-right: auto; }
+.btn:disabled { opacity: .45; cursor: default; }
+.sort-ind { color: var(--accent); }
+.drawer { width: min(1000px, 100vw); }
+.cl-table { overflow-x: hidden; }
+.cl-table th, .cl-table td { padding: 8px 10px; }
+#drawerBody.loading #custBody { opacity: .5; transition: opacity .15s; }

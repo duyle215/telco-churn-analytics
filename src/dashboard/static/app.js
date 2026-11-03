@@ -186,6 +186,7 @@
         <div class="pills" id="exPills"></div>
         <div class="spacer"></div>
         <button class="btn ghost no-print" id="exClear" type="button">Xoá lọc</button>
+        <button class="btn primary no-print" id="exCustomers" type="button" title="Xem trước danh sách khách theo bộ lọc này, rồi tải CSV">${ICON.download}Xem &amp; tải CSV</button>
       </div>
       <div class="narrative" id="exHeadline"></div>
       <div class="report">
@@ -197,10 +198,7 @@
             <div class="viz-answer" id="exTopAnswer"></div></div></div>
           <div class="active-filters" id="exActive"></div>
           <div class="top-factors" id="exTop"></div>
-          <div class="panel-actions no-print">
-            <button class="btn" id="exAll" type="button">Mọi nhánh</button>
-            <button class="btn" id="exCustomers" type="button">${ICON.download}Danh sách khách</button>
-          </div>
+          <button class="btn block no-print" id="exAll" type="button">Xem mọi nhánh của từng yếu tố</button>
         </div>
         ${viz('ex-contract', 'Loại hợp đồng nào dễ rời đi nhất?', 'v-b1')}
         ${viz('ex-tenure', 'Khách thường rời đi ở giai đoạn nào?', 'v-b2')}
@@ -223,6 +221,7 @@
       if (b) openPopover(b.dataset.pop, b);
     });
     $('#exClear').addEventListener('click', () => { ex.filters = {}; onFiltersChanged(); });
+    // Luôn mở khung xem trước trước khi tải, để người dùng thấy đúng những dòng sẽ xuất.
     $('#exCustomers').addEventListener('click', openCustomerList);
     $('#exAll').addEventListener('click', openAllFactors);
     const toggleFromEl = (e) => {
@@ -639,15 +638,8 @@
   }
 
   async function openCustomerList() {
-    openDrawer(Object.keys(ex.filters).length ? filterSummary() : 'Toàn công ty', 'Khách đang hoạt động trong nhóm, sắp theo cước giảm dần');
-    try {
-      const res = await fetch('/api/explore/customers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: ex.filters }) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      renderCustomerTable(data.rows, data.limit);
-    } catch (e) {
-      $('#drawerBody').innerHTML = `<p class="error">Không tải được danh sách khách: ${esc(e.message)}</p>`;
-    }
+    openDrawer('Xem trước danh sách khách', 'Kiểm tra danh sách, thu hẹp thêm nếu cần, rồi tải CSV');
+    renderCustomerTable();
   }
 
   function filterSummary() {
@@ -657,43 +649,110 @@
     }).join(' · ');
   }
 
-  function renderCustomerTable(rows, limit) {
+  /* Tải CSV do server tạo, dùng lại đúng bộ lọc trang (+ lọc nhanh nếu gọi từ danh sách). */
+  async function downloadCustomersCsv(listParams = {}) {
+    try {
+      const res = await fetch('/api/explore/customers.csv', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filters: ex.filters, ...listParams }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const name = (res.headers.get('Content-Disposition') || '').match(/filename=([^;]+)/)?.[1] || 'khach_can_cham_soc.csv';
+      const url = URL.createObjectURL(await res.blob());
+      const a = Object.assign(document.createElement('a'), { href: url, download: name });
+      a.click(); URL.revokeObjectURL(url);
+      toast(`Đã tải ${name}`);
+    } catch (e) {
+      toast('Không tải được CSV'); console.error(e);
+    }
+  }
+
+  /*
+    Danh sách khách: lọc nhanh, tìm, sắp xếp và chia trang đều chạy ở SQL (mart.usp_explore_customers);
+    trình duyệt chỉ gửi tham số qua AJAX và nhận về đúng một trang 50 dòng.
+  */
+  function renderCustomerTable() {
+    const PAGE = 50;
     const cols = [
       ['customer_id', 'Mã khách', 's'], ['contract_type', 'Hợp đồng', 's'], ['internet_service', 'Internet', 's'],
-      ['tenure_months', 'Gắn bó (th)', 'n'], ['current_mrr_usd', 'Cước hiện tại', 'usd'], ['tickets', 'Ticket', 'n'],
-      ['billing_tickets', 'Ticket hoá đơn', 'n'], ['late_payment_rate', 'Trả trễ', 'pct'], ['tech_support', 'Hỗ trợ KT', 's'],
-      ['addon_count', 'Dịch vụ kèm', 'n'], ['payment_method', 'Thanh toán', 's'],
+      ['tenure_months', 'Gắn bó (th)', 'n'], ['current_mrr_usd', 'Cước/tháng', 'usd'], ['billing_tickets', 'Khiếu nại HĐ', 'n'],
+      ['late_payment_rate', 'Trả trễ', 'pct'], ['tech_support', 'Hỗ trợ KT', 's'], ['payment_method', 'Thanh toán', 's'],
     ];
-    let sortKey = 'current_mrr_usd', sortDir = -1, query = '';
+    const QUICK = [
+      { key: 'mrr', label: 'Cước cao (top 25%)' }, { key: 'bill', label: 'Có khiếu nại hoá đơn' },
+      { key: 'late', label: 'Hay trả trễ (≥ 20%)' }, { key: 'notech', label: 'Không hỗ trợ KT' }, { key: 'new', label: 'Khách năm đầu' },
+    ];
+    const st = { quick: new Set(), search: '', sort: 'current_mrr_usd', desc: true, page: 0, ctrl: null, timer: null, matched: 0 };
+    const params = () => ({ quick: [...st.quick], search: st.search, sort: st.sort, desc: st.desc, page: st.page, page_size: PAGE });
+    const context = Object.keys(ex.filters).length ? esc(filterSummary()) : 'Toàn công ty';
     const body = $('#drawerBody');
     body.innerHTML = `
+      <div class="cl-context">Theo bộ lọc trang: <b>${context}</b> · <span id="clGroup">…</span></div>
+      <div class="cl-quick" id="clQuick">${QUICK.map((q) => `<button type="button" class="chip" data-q="${q.key}" aria-pressed="false">${esc(q.label)}</button>`).join('')}</div>
       <div class="toolbar">
         <input class="input" id="custSearch" placeholder="Tìm mã khách..." aria-label="Tìm mã khách">
         <span class="muted" id="custCount"></span>
-        <button class="btn" id="custExport" type="button" style="margin-left:auto">${ICON.download}Xuất CSV</button>
+        <button class="btn primary" id="custExport" type="button" style="margin-left:auto">${ICON.download}Tải CSV</button>
       </div>
-      <div class="table-wrap"><table><thead><tr>${cols.map(([k, l, t]) => `<th class="sortable ${t === 's' ? '' : 'r'}" data-k="${k}">${l}</th>`).join('')}</tr></thead>
-      <tbody id="custBody"></tbody></table></div>
-      ${rows.length >= limit ? `<p class="muted">Hiển thị ${limit} khách có cước cao nhất.</p>` : ''}`;
+      <div class="table-wrap cl-table"><table><thead><tr>${cols.map(([k, l, t]) => `<th class="sortable ${t === 's' ? '' : 'r'}" data-k="${k}">${l}<span class="sort-ind"></span></th>`).join('')}</tr></thead>
+      <tbody id="custBody"><tr><td colspan="${cols.length}"><div class="skeleton" style="height:240px"></div></td></tr></tbody></table></div>
+      <div class="cl-pager"><span class="muted" id="custRange"></span>
+        <button class="btn" id="custPrev" type="button">‹ Trước</button><button class="btn" id="custNext" type="button">Sau ›</button></div>`;
     const cell = (r, k, t) => (r[k] == null ? '–' : t === 'usd' ? fmt.usd2(r[k]) : t === 'pct' ? fmt.pct(r[k], 0) : t === 'n' ? fmt.int(r[k]) : esc(valueLabel('', r[k])));
-    const visible = () => rows.filter((r) => r.customer_id.toLowerCase().includes(query))
-      .sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir);
-    const draw = () => {
-      const v = visible();
-      $('#custBody').innerHTML = v.map((r) => `<tr>${cols.map(([k, , t]) => `<td class="${t === 's' ? '' : 'r num'}">${cell(r, k, t)}</td>`).join('')}</tr>`).join('');
-      $('#custCount').textContent = `${fmt.int(v.length)} khách`;
+
+    const load = async () => {
+      if (st.ctrl) st.ctrl.abort();
+      st.ctrl = new AbortController();
+      body.classList.add('loading');
+      try {
+        const res = await fetch('/api/explore/customers', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filters: ex.filters, ...params() }), signal: st.ctrl.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        st.matched = d.matched;
+        $('#clGroup').textContent = `${fmt.int(d.group_total)} khách đang hoạt động`;
+        body.querySelector('[data-q="mrr"]').textContent = `Cước cao (≥ ${fmt.usd(d.mrr_p75 || 0)})`;
+        $('#custBody').innerHTML = d.rows.length
+          ? d.rows.map((r) => `<tr>${cols.map(([k, , t]) => `<td class="${t === 's' ? '' : 'r num'}">${cell(r, k, t)}</td>`).join('')}</tr>`).join('')
+          : `<tr><td colspan="${cols.length}" class="muted" style="text-align:center;padding:24px">Không có khách nào khớp. Bỏ bớt một bộ lọc nhanh.</td></tr>`;
+        const pages = Math.max(1, Math.ceil(d.matched / PAGE));
+        $('#custCount').textContent = `${fmt.int(d.matched)} / ${fmt.int(d.group_total)} khách khớp`;
+        $('#custRange').textContent = d.matched ? `${fmt.int(st.page * PAGE + 1)}–${fmt.int(st.page * PAGE + d.rows.length)} / ${fmt.int(d.matched)} · trang ${st.page + 1}/${pages}` : '';
+        $('#custPrev').disabled = st.page === 0;
+        $('#custNext').disabled = st.page >= pages - 1;
+        $('#custExport').innerHTML = `${ICON.download}Tải CSV ${fmt.int(d.matched)} khách`;
+        $('#custExport').disabled = !d.matched;
+      } catch (e) {
+        if (e.name !== 'AbortError') { $('#custBody').innerHTML = `<tr><td class="error">Không tải được: ${esc(e.message)}</td></tr>`; }
+      } finally {
+        body.classList.remove('loading');
+      }
+      body.querySelectorAll('th.sortable').forEach((th) => {
+        th.querySelector('.sort-ind').textContent = th.dataset.k === st.sort ? (st.desc ? ' ▼' : ' ▲') : '';
+      });
+      body.querySelectorAll('#clQuick .chip').forEach((c) => {
+        const on = st.quick.has(c.dataset.q); c.classList.toggle('on', on); c.setAttribute('aria-pressed', on);
+      });
     };
-    $('#custSearch').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); draw(); });
-    body.querySelectorAll('th.sortable').forEach((th) => th.addEventListener('click', () => {
-      sortDir = sortKey === th.dataset.k ? -sortDir : -1; sortKey = th.dataset.k; draw();
-    }));
-    $('#custExport').addEventListener('click', () => {
-      const lines = [cols.map((c) => c[0]).join(',')].concat(visible().map((r) => cols.map(([k]) => `"${String(r[k] ?? '').replace(/"/g, '""')}"`).join(',')));
-      const url = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
-      const a = Object.assign(document.createElement('a'), { href: url, download: 'khach_hang_nhom_dang_chon.csv' });
-      a.click(); URL.revokeObjectURL(url); toast('Đã xuất CSV');
+
+    $('#clQuick').addEventListener('click', (e) => {
+      const c = e.target.closest('[data-q]');
+      if (!c) return;
+      st.quick.has(c.dataset.q) ? st.quick.delete(c.dataset.q) : st.quick.add(c.dataset.q);
+      st.page = 0; load();
     });
-    draw();
+    // Chờ người dùng gõ xong 250 ms mới gọi server, tránh mỗi phím một request.
+    $('#custSearch').addEventListener('input', (e) => {
+      clearTimeout(st.timer);
+      st.timer = setTimeout(() => { st.search = e.target.value.trim(); st.page = 0; load(); }, 250);
+    });
+    body.querySelectorAll('th.sortable').forEach((th) => th.addEventListener('click', () => {
+      st.desc = st.sort === th.dataset.k ? !st.desc : true; st.sort = th.dataset.k; st.page = 0; load();
+    }));
+    $('#custPrev').addEventListener('click', () => { st.page -= 1; load(); });
+    $('#custNext').addEventListener('click', () => { st.page += 1; load(); });
+    $('#custExport').addEventListener('click', () => downloadCustomersCsv(params()));
+    load();
   }
 
   function closeDrawer() {
