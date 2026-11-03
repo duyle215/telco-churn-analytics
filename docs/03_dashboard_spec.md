@@ -40,7 +40,29 @@ Bố cục kiểu trang báo cáo Power BI: một lưới nhiều hình nhỏ, �
 - **Panel yếu tố tác động mạnh nhất:** mọi yếu tố xếp từ mạnh đến yếu, cuộn dọc trong panel. Mỗi yếu tố có ô ▲ nhánh rời đi nhiều nhất và ô ▼ ít nhất, bấm để lọc. Không xếp hạng nhánh dưới 30 khách (nhóm quá nhỏ thì hạ xuống 5 khách và gắn nhãn "Mẫu nhỏ"); bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet.
 - **Chi tiết khi cần:** "Xem danh sách ›" trong thẻ Khách mở danh sách khách đang hoạt động (tìm kiếm, sắp xếp, xuất CSV); "Xem mọi nhánh của từng yếu tố" mở đủ 13 yếu tố.
 
-## 3. Hiệu năng truy vấn
+## 3. Mỗi hình trả lời một câu hỏi
+
+Mỗi hình có dòng 1 là **câu hỏi kinh doanh**, dòng 2 là **câu trả lời** tính từ dữ liệu đang lọc (đổi theo bộ lọc).
+
+| # | Câu hỏi | Chỉ số | Nguồn (result set của `mart.usp_explore`) | Hình | Câu trả lời tự sinh |
+|---|---|---|---|---|---|
+| 1 | Tỷ lệ rời đi đang tăng hay giảm? | khách rời đi / khách trong tháng | 3 · xu hướng theo tháng | Đường, so với toàn công ty hoặc chỉ tiêu | Đỉnh, tháng gần nhất so với bình quân |
+| 2 | Doanh thu định kỳ có đạt chỉ tiêu không? (khi lọc: nhóm đóng góp bao nhiêu?) | tổng cước tháng, chỉ tiêu Finance | 3 · xu hướng theo tháng | Cột + đường chỉ tiêu | Số tháng đạt; chênh lệch tháng gần nhất (hoặc tỷ trọng MRR) |
+| 3 | Loại hợp đồng nào dễ rời đi nhất? | tỷ lệ rời đi 24 tháng theo hợp đồng | 2 · thống kê theo yếu tố | Thanh ngang, lọc chéo | Nhánh cao nhất gấp mấy lần nhánh thấp nhất |
+| 4 | Khách thường rời đi ở giai đoạn nào? | tỷ lệ rời đi theo nhóm gắn bó | 2 · thống kê theo yếu tố | Cột, lọc chéo | Giai đoạn rời đi nhiều nhất và ít nhất |
+| 5 | Khách rời đi đến từ đâu? | tỷ trọng khách rời đi theo loại internet | 2 · thống kê theo yếu tố | Donut, lọc chéo | Phần lớn nhất chiếm bao nhiêu % |
+| 6 | Yếu tố nào tạo khác biệt lớn nhất? | chênh lệch tỷ lệ rời đi giữa nhánh cao và thấp nhất, 13 yếu tố | 2 · thống kê theo yếu tố | Danh sách xếp hạng | Yếu tố đứng đầu và hai nhánh của nó |
+| KPI | Nhóm lớn cỡ nào, rời đi bao nhiêu, mất bao nhiêu tiền? | khách, tỷ lệ rời đi, MRR, MRR dự kiến mất | 1 · KPI + 3 · xu hướng | Thẻ số + sparkline | So với tháng trước / mức chung |
+
+**Cách tổ chức truy vấn:** gom theo **mức chi tiết (grain)** của dữ liệu, không tách theo từng hình.
+Câu hỏi 1, 2 và sparkline KPI cùng cần số liệu theo tháng, nên dùng chung một result set. Câu hỏi 3–6 cùng cần
+"tỷ lệ rời đi của từng nhánh trong ngữ cảnh lọc", nên dùng chung một result set (một lần quét bảng cầu nối).
+Nếu viết mỗi hình một truy vấn thì sẽ thành 6–8 lượt gọi (N+1) và quét bảng fact nhiều lần cho cùng một kết quả.
+
+**Phân công:** định nghĩa chỉ số (tử số, mẫu số, cửa sổ thời gian) nằm trong SQL, là nguồn sự thật duy nhất.
+Giao diện chỉ chọn số cần nói (lớn nhất, nhỏ nhất, tháng gần nhất) và diễn đạt thành câu.
+
+## 4. Hiệu năng truy vấn
 
 Mỗi lần đổi bộ lọc chỉ gọi **1 stored procedure, 1 round-trip** (`mart.usp_explore`), không có N+1:
 
@@ -63,7 +85,7 @@ MRR $53.883, MRR dự kiến mất $2.941, khớp phân khúc rủi ro trong
 [06_risk_segments.sql](../sql/analysis/06_risk_segments.sql). Không lọc thì số theo tháng khớp
 `mart.v_kpi_monthly` (ví dụ 2025-04: 4.814 khách, 149 rời đi).
 
-## 4. Quy tắc trình bày
+## 5. Quy tắc trình bày
 
 - Nhãn tiếng Việt cho người không chuyên ("Theo tháng", "Trả tay", "Đã rời đi (24 tháng)").
 - Màu: xanh là nhóm đang chọn, xám là toàn công ty, nét đứt là chỉ tiêu. Xanh lá/đỏ chỉ dùng cho nhánh rời đi ít/nhiều nhất và luôn có số đi kèm.

@@ -176,8 +176,10 @@
     if (location.hash.includes('?')) ex.filters = filtersFromHash();
     syncHash();
     ex.catalog = ex.catalog || await api('factors');
-    const viz = (id, title, cls) => `<div class="card viz ${cls}"><div class="viz-head"><h3 class="viz-title" id="${id}-title">${title}</h3>
-      <span class="viz-hint" id="${id}-hint"></span></div><div class="chart fill" id="${id}"></div></div>`;
+    // Mỗi hình trả lời đúng một câu hỏi: dòng 1 là câu hỏi, dòng 2 là câu trả lời tính từ dữ liệu đang lọc.
+    const viz = (id, question, cls) => `<div class="card viz ${cls}"><div class="viz-head"><div class="viz-q">
+      <h3 class="viz-title" id="${id}-title">${question}</h3><div class="viz-answer" id="${id}-hint"></div></div></div>
+      <div class="chart fill" id="${id}"></div></div>`;
     root.innerHTML = `
       <div class="card filterbar">
         <select class="input select" id="exPreset" aria-label="Góc nhìn có sẵn"></select>
@@ -188,17 +190,18 @@
       <div class="narrative" id="exHeadline"></div>
       <div class="report">
         <div class="kpi-row" id="exKpis"></div>
-        ${viz('ex-churn', 'Tỷ lệ rời đi theo tháng', 'v-trend')}
-        ${viz('ex-mrr', 'Doanh thu định kỳ (MRR) theo tháng', 'v-mrr')}
+        ${viz('ex-churn', 'Tỷ lệ rời đi đang tăng hay giảm?', 'v-trend')}
+        ${viz('ex-mrr', 'Doanh thu định kỳ có đạt chỉ tiêu không?', 'v-mrr')}
         <div class="card viz v-factors">
-          <div class="viz-head"><h3 class="viz-title">Yếu tố tác động mạnh nhất</h3></div>
+          <div class="viz-head"><div class="viz-q"><h3 class="viz-title">Yếu tố nào tạo khác biệt lớn nhất?</h3>
+            <div class="viz-answer" id="exTopAnswer"></div></div></div>
           <div class="active-filters" id="exActive"></div>
           <div class="top-factors" id="exTop"></div>
           <button class="btn block no-print" id="exAll" type="button">Xem mọi nhánh của từng yếu tố</button>
         </div>
-        ${viz('ex-contract', 'Rời đi theo loại hợp đồng', 'v-b1')}
-        ${viz('ex-tenure', 'Rời đi theo thời gian gắn bó', 'v-b2')}
-        ${viz('ex-internet', 'Khách rời đi đến từ đâu', 'v-b3')}
+        ${viz('ex-contract', 'Loại hợp đồng nào dễ rời đi nhất?', 'v-b1')}
+        ${viz('ex-tenure', 'Khách thường rời đi ở giai đoạn nào?', 'v-b2')}
+        ${viz('ex-internet', 'Khách rời đi đến từ đâu?', 'v-b3')}
       </div>`;
     ['ex-churn', 'ex-mrr', 'ex-contract', 'ex-tenure', 'ex-internet'].forEach((id) => mountChart(id, {}));
     // Lọc chéo kiểu Power BI: bấm một cột để lọc theo giá trị đó, bấm lại để bỏ.
@@ -357,10 +360,9 @@
     if (smallSample) ranked = rank(MIN_GROUP_SMALL);
     const top = ranked[0];
 
-    // Một dòng tóm tắt; con số chi tiết nằm ở các thẻ và biểu đồ.
+    // Một dòng tóm tắt quy mô nhóm; câu trả lời chi tiết nằm ở từng hình, không lặp lại ở đây.
     const who = filtered ? `Nhóm ${fmt.int(k.sel_customers)} khách` : 'Toàn công ty';
-    const driver = top ? ` · Khác biệt nhất: <b>${esc(top.f.label.toLowerCase())}</b> (${esc(valueLabel(top.f.key, top.hi.value))} ${fmt.pct(top.hi.rate)} so với ${esc(valueLabel(top.f.key, top.lo.value))} ${fmt.pct(top.lo.rate)})` : '';
-    $('#exHeadline').innerHTML = `${ICON.bulb}<span>${who}: <b>${fmt.pct(selRate)}</b> đã rời đi trong 24 tháng${filtered ? `, ${lift >= 1 ? 'gấp' : 'bằng'} <b>${fmt.num(lift, lift >= 1 ? 1 : 2)} lần</b> mức chung` : ''}${driver}</span>`
+    $('#exHeadline').innerHTML = `${ICON.bulb}<span>${who}: <b>${fmt.pct(selRate)}</b> đã rời đi trong 24 tháng${filtered ? `, ${lift >= 1 ? 'gấp' : 'bằng'} <b>${fmt.num(lift, lift >= 1 ? 1 : 2)} lần</b> mức chung (${fmt.pct(allRate)})` : ''}.</span>`
       + (k.sel_customers < 100 ? badge('warn', 'mẫu nhỏ') : '');
 
     const t = d.trend, last = t[t.length - 1], prev = t[t.length - 2];
@@ -410,6 +412,9 @@
         <div class="tf-opts">${opt(i, i.hi, 'hi')}${opt(i, i.lo, 'lo')}</div>
       </div>`).join('') : '<p class="muted">Nhóm quá nhỏ để chia tiếp. Hãy bỏ bớt một bộ lọc.</p>';
     $('#exTop').scrollTop = 0;
+    $('#exTopAnswer').innerHTML = top
+      ? `<b>${esc(top.f.label)}</b>: ${esc(valueLabel(top.f.key, top.hi.value))} ${fmt.pct(top.hi.rate)} so với ${esc(valueLabel(top.f.key, top.lo.value))} ${fmt.pct(top.lo.rate)}.`
+      : 'Nhóm quá nhỏ để chia tiếp.';
 
     drawChurnChart(d, filtered);
     drawMrrChart(d, filtered);
@@ -429,7 +434,13 @@
     const months = d.trend.map((t) => t.year_month);
     const sel = d.trend.map((t) => (t.sel_customers ? t.sel_churners / t.sel_customers : null));
     const peakIdx = sel.reduce((bi, v, i) => (v != null && (bi < 0 || v > sel[bi]) ? i : bi), -1);
-    $('#ex-churn-hint').textContent = peakIdx >= 0 ? `Đỉnh ${fmt.pct(sel[peakIdx], 1)} · ${months[peakIdx]}` : '';
+    const avgRate = sum(d.trend, (t) => t.sel_churners) / Math.max(1, sum(d.trend, (t) => t.sel_customers));
+    const lastRate = sel[sel.length - 1];
+    const mm = (m) => `${m.slice(5)}/${m.slice(0, 4)}`;
+    $('#ex-churn-hint').innerHTML = peakIdx >= 0
+      ? `Đỉnh <b>${fmt.pct(sel[peakIdx], 1)}</b> (${mm(months[peakIdx])}${months[peakIdx] >= '2025-03' && months[peakIdx] <= '2025-05' ? ', sau tăng giá Fiber' : ''}); `
+        + `tháng gần nhất <b>${lastRate == null ? '–' : fmt.pct(lastRate, 1)}</b> so với bình quân ${fmt.pct(avgRate, 1)}.`
+      : '';
     const series = [{ name: filtered ? 'Nhóm đang chọn' : 'Toàn công ty', type: 'line', data: sel, symbol: 'circle', symbolSize: 5, showSymbol: false,
       lineStyle: { width: 2.5, color: s1 }, itemStyle: { color: s1 },
       areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: s1 + '40' }, { offset: 1, color: s1 + '05' }]) },
@@ -464,7 +475,11 @@
     const s1 = css('--series-1'), muted = css('--text-3');
     const months = d.trend.map((t) => t.year_month);
     const lastMrr = d.trend[d.trend.length - 1].sel_mrr, firstMrr = d.trend[0].sel_mrr;
-    $('#ex-mrr-hint').textContent = firstMrr ? `${fmt.pct(lastMrr / firstMrr - 1, 1)} so với đầu kỳ` : '';
+    const lastRow = d.trend[d.trend.length - 1];
+    $('#ex-mrr-title').textContent = filtered ? 'Nhóm này đóng góp bao nhiêu doanh thu?' : 'Doanh thu định kỳ có đạt chỉ tiêu không?';
+    $('#ex-mrr-hint').innerHTML = filtered
+      ? `<b>${fmt.usd(lastMrr)}</b>/tháng, ${fmt.pct(lastRow.all_mrr ? lastMrr / lastRow.all_mrr : 0)} MRR công ty; ${firstMrr ? `${lastMrr >= firstMrr ? 'tăng' : 'giảm'} ${fmt.pct(Math.abs(lastMrr / firstMrr - 1), 1)} so với đầu kỳ` : ''}.`
+      : `Đạt chỉ tiêu <b>${d.trend.filter((t) => t.sel_mrr >= t.mrr_target_usd).length}/${d.trend.length}</b> tháng; tháng gần nhất ${lastMrr >= lastRow.mrr_target_usd ? 'vượt' : 'hụt'} <b>${fmt.pct(Math.abs(lastMrr / lastRow.mrr_target_usd - 1), 1)}</b>.`;
     const series = [{ name: 'MRR', type: 'bar', barMaxWidth: 14, data: d.trend.map((t) => t.sel_mrr),
       itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: s1 }, { offset: 1, color: s1 + '99' }]), borderRadius: [3, 3, 0, 0] } }];
     if (!filtered) series.push({ name: 'Chỉ tiêu', type: 'line', data: d.trend.map((t) => t.mrr_target_usd), showSymbol: false,
@@ -483,6 +498,19 @@
     }, true);
   }
 
+  /* Câu trả lời cho biểu đồ cột: nhánh rời đi nhiều nhất so với ít nhất (chỉ xét nhánh đủ lớn để không bị nhiễu). */
+  function barAnswer(key, rows) {
+    const withRate = rows.map((r) => ({ ...r, rate: r.churners / r.customers }));
+    const big = withRate.filter((r) => r.customers >= MIN_GROUP);
+    const pool = (big.length >= 2 ? big : withRate).slice().sort((a, b) => b.rate - a.rate);
+    if (pool.length < 2) return 'Chỉ còn một nhánh trong nhóm đang chọn.';
+    const hi = pool[0], lo = pool[pool.length - 1];
+    const name = (r) => esc(valueLabel(key, r.value));
+    if (key === 'tenure') return `Nhiều nhất ở <b>${name(hi)}</b> (${fmt.pct(hi.rate)}), ít nhất ở ${name(lo)} (${fmt.pct(lo.rate)}).`;
+    const ratio = lo.rate > 0 ? `, gấp <b>${fmt.num(hi.rate / lo.rate, hi.rate / lo.rate >= 10 ? 0 : 1)} lần</b> ${name(lo)} (${fmt.pct(lo.rate)})` : `, trong khi ${name(lo)} gần như không rời đi`;
+    return `<b>${name(hi)}</b> rời đi ${fmt.pct(hi.rate)}${ratio}.`;
+  }
+
   /* Donut cơ cấu: khách rời đi đến từ đâu (bổ sung cho các biểu đồ tỷ lệ). Màu gắn cố định với từng loại internet. */
   function drawChurnMixDonut(d, id, key) {
     const chart = state.charts[id];
@@ -492,7 +520,9 @@
     const total = sum(rows, (r) => r.churners);
     const chosen = ex.filters[key] || [];
     const top = rows.reduce((a, r) => (!a || r.churners > a.churners ? r : a), null);
-    $(`#${id}-hint`).textContent = top && total ? `${valueLabel(key, top.value)} chiếm ${fmt.pct(top.churners / total, 0)}` : '';
+    $(`#${id}-hint`).innerHTML = top && total
+      ? `<b>${esc(valueLabel(key, top.value))}</b> chiếm <b>${fmt.pct(top.churners / total, 0)}</b> khách rời đi (${fmt.int(top.churners)}/${fmt.int(total)}).`
+      : 'Không có khách rời đi trong nhóm này.';
     chart.setOption({
       tooltip: { ...baseOption().tooltip, trigger: 'item', formatter: (p) => {
         const r = p.data.row;
@@ -531,7 +561,7 @@
         itemStyle: { color: chosen.length && !on ? neutral : s1, opacity: chosen.length && !on ? 0.55 : 1,
           borderRadius: orient === 'h' ? [0, 4, 4, 0] : [4, 4, 0, 0] } };
     });
-    $(`#${id}-hint`).textContent = chosen.length ? 'Bấm cột đậm để bỏ lọc' : 'Bấm cột để lọc';
+    $(`#${id}-hint`).innerHTML = barAnswer(key, rows);
     const valueAxis = axis({ type: 'value', max: (v) => Math.max(v.max * 1.18, allRate * 1.1),
       axisLabel: { ...axis().axisLabel, formatter: (v) => fmt.pct(v, 0) }, splitNumber: 3 });
     const catAxis = axis({ type: 'category', data: cats, inverse: orient === 'h', axisLine: { show: false },
