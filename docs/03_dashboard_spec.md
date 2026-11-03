@@ -22,19 +22,22 @@ bằng đúng chiều cao cửa sổ.
 
 ## 2. Trang Khám phá
 
+Bố cục kiểu trang báo cáo Power BI: một lưới nhiều hình nhỏ, ít chữ, vừa một màn hình (khung 16:9 / A4 ngang).
+
 ```
-┌ Góc nhìn ▾ │ Hợp đồng ▾ │ Internet ▾ │ Gắn bó ▾ │ Dịch vụ kèm ▾ │ Thanh toán ▾ │ Hỗ trợ KT ▾ │ Khác ▾ │ Xoá lọc ┐
-├ 1 câu kết luận (tự sinh)                                                                                                  ┤
-├ Khách trong nhóm (Xem danh sách ›) │ Đã rời đi (24 tháng) │ MRR hiện tại │ MRR dự kiến mất / tháng                     ┤
-├ Tỷ lệ rời đi theo tháng (nhóm vs toàn công ty, hoặc vs chỉ tiêu)   │ Yếu tố tác động mạnh nhất: ô ▲ / ô ▼ bấm để lọc      ┘
+┌ Góc nhìn ▾ │ Hợp đồng ▾ │ Internet ▾ │ Gắn bó ▾ │ Dịch vụ kèm ▾ │ Thanh toán ▾ │ Hỗ trợ KT ▾ │ Khác ▾ │      Xoá lọc ┐
+│ 1 dòng tóm tắt tự sinh                                                                                        │
+├ KPI+sparkline: Khách │ Đã rời đi 24 th │ Rời đi tháng gần nhất │ MRR tháng gần nhất │ MRR dự kiến mất/tháng ┤
+├ Tỷ lệ rời đi theo tháng (đường)      │ MRR theo tháng (cột)          │ Yếu tố tác động mạnh nhất       ┤
+├ Rời đi theo hợp đồng │ theo gắn bó   │ theo loại internet            │ (Đang lọc ✕ · ô ▲/▼ · cuộn dọc) ┘
 ```
 
-- **Bộ lọc:** luôn một hàng, không thanh cuộn. 6 yếu tố chính thành nút thả xuống, 7 yếu tố còn lại gom trong "Khác". Nút đang lọc hiện tên giá trị (nhiều giá trị thì hiện "2 lựa chọn"); thiếu chỗ thì chỉ nút đang lọc rút gọn bằng dấu ba chấm, rê chuột để xem đủ. Cùng một yếu tố chọn nhiều giá trị là HOẶC, khác yếu tố là VÀ. Trong bảng chọn, mỗi lựa chọn hiện luôn số khách và tỷ lệ rời đi theo các bộ lọc còn lại, nên chưa bấm đã biết tác động. Bộ lọc lưu trên URL để gửi link.
-- **Góc nhìn có sẵn:** Toàn công ty · Nhóm rủi ro cao (hợp đồng tháng, Fiber, trả tay) · Khách năm đầu · Khách Fiber · Không dùng dịch vụ kèm · Hợp đồng dài hạn.
-- **Câu kết luận tự sinh:** quy mô nhóm, tỷ lệ rời đi so với mức chung, và yếu tố khác biệt nhất. Nhóm dưới 100 khách có cảnh báo mẫu nhỏ.
-- **Biểu đồ:** tỷ lệ rời đi theo tháng, đánh dấu đỉnh và mốc tăng giá Fiber. Không lọc thì so với chỉ tiêu Finance; có lọc thì so với toàn công ty.
-- **Yếu tố tác động mạnh nhất:** mỗi yếu tố có hai ô bấm, ▲ nhánh rời đi nhiều nhất (đỏ) và ▼ ít nhất (xanh). Mỗi ô ghi tỷ lệ, số khách, thanh tỷ lệ; rê chuột hiện "＋ Lọc". Panel liệt kê mọi yếu tố từ mạnh đến yếu, cuộn dọc bên trong panel (tiêu đề cột ▲/▼ đứng yên khi cuộn); trang vẫn vừa một màn hình. Không xếp hạng nhánh dưới 30 khách (nhóm quá nhỏ thì hạ ngưỡng xuống 5 khách và gắn nhãn "Mẫu nhỏ"), và bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet (vì nó chỉ lặp lại yếu tố Loại internet).
-- **Chi tiết khi cần:** nút "Xem mọi nhánh của từng yếu tố" ở chân panel; "Xem danh sách ›" trong thẻ Khách trong nhóm mở danh sách khách đang hoạt động (tìm kiếm, sắp xếp, xuất CSV).
+- **Lọc:** thanh lọc một hàng, không thanh cuộn (6 yếu tố chính + "Khác"). Cùng một yếu tố chọn nhiều giá trị là HOẶC, khác yếu tố là VÀ. Bảng chọn hiện sẵn số khách và tỷ lệ rời đi của từng lựa chọn. Bộ lọc lưu trên URL.
+- **Lọc chéo như Power BI:** bấm một cột trong 3 biểu đồ hợp đồng / gắn bó / internet để lọc theo giá trị đó, bấm lại để bỏ. Cột đang chọn tô đậm, cột khác làm mờ; đường đứt nét là mức rời đi chung của công ty.
+- **Bỏ chọn ở mọi nơi:** ✕ trên thanh lọc, bỏ tick trong bảng chọn, bấm lại cột đậm, hoặc ✕ ở hàng "Đang lọc" trong panel.
+- **5 thẻ KPI có sparkline 24 tháng** và so sánh với tháng trước (đỏ là xấu đi, xanh là tốt lên).
+- **Panel yếu tố tác động mạnh nhất:** mọi yếu tố xếp từ mạnh đến yếu, cuộn dọc trong panel. Mỗi yếu tố có ô ▲ nhánh rời đi nhiều nhất và ô ▼ ít nhất, bấm để lọc. Không xếp hạng nhánh dưới 30 khách (nhóm quá nhỏ thì hạ xuống 5 khách và gắn nhãn "Mẫu nhỏ"); bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet.
+- **Chi tiết khi cần:** "Xem danh sách ›" trong thẻ Khách mở danh sách khách đang hoạt động (tìm kiếm, sắp xếp, xuất CSV); "Xem mọi nhánh của từng yếu tố" mở đủ 13 yếu tố.
 
 ## 3. Hiệu năng truy vấn
 
