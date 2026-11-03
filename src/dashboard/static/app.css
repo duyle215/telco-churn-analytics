@@ -497,3 +497,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .viz-answer { font-size: 12px; color: var(--text-2); line-height: 1.35; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .viz-answer b { color: var(--text); font-weight: 650; }
 .v-factors .viz-answer { white-space: normal; }
+
+.panel-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; flex: none; }
+.panel-actions .btn { justify-content: center; padding: 5px 10px; }
+.kpi-spark .kpi-foot { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }

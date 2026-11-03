@@ -36,9 +36,9 @@ Bố cục kiểu trang báo cáo Power BI: một lưới nhiều hình nhỏ, �
 - **Hai loại câu hỏi:** các biểu đồ cột trả lời *nhóm nào rời đi với tỷ lệ cao*; donut trả lời *khách rời đi đến từ đâu* (cơ cấu). Ví dụ Fiber rời đi 41,9% nhưng chiếm 69% tổng số khách rời đi, vì vừa rời đi nhiều vừa đông khách.
 - **Lọc chéo như Power BI:** bấm một cột (hợp đồng, gắn bó) hoặc một lát donut (internet) để lọc theo giá trị đó, bấm lại để bỏ. Cột đang chọn tô đậm, cột khác làm mờ; đường đứt nét là mức rời đi chung của công ty.
 - **Bỏ chọn ở mọi nơi:** ✕ trên thanh lọc, bỏ tick trong bảng chọn, bấm lại cột đậm, hoặc ✕ ở hàng "Đang lọc" trong panel.
-- **5 thẻ KPI có sparkline 24 tháng** và so sánh với tháng trước (đỏ là xấu đi, xanh là tốt lên).
+- **5 thẻ KPI cùng một khuôn** (Khách đang có, Tỷ lệ rời đi, MRR, MRR mất do rời đi, ARPU): giá trị là tháng gần nhất; nhãn là thay đổi so với tháng trước, màu theo ý nghĩa (khách/MRR/ARPU tăng là tốt, tỷ lệ rời đi/MRR mất tăng là xấu); sparkline 24 tháng của chính chỉ số đó; dòng chân so với toàn công ty khi đang lọc, hoặc với chỉ tiêu/bình quân khi xem toàn công ty.
 - **Panel yếu tố tác động mạnh nhất:** mọi yếu tố xếp từ mạnh đến yếu, cuộn dọc trong panel. Mỗi yếu tố có ô ▲ nhánh rời đi nhiều nhất và ô ▼ ít nhất, bấm để lọc. Không xếp hạng nhánh dưới 30 khách (nhóm quá nhỏ thì hạ xuống 5 khách và gắn nhãn "Mẫu nhỏ"); bỏ "Không dùng internet" ở các yếu tố phụ thuộc internet.
-- **Chi tiết khi cần:** "Xem danh sách ›" trong thẻ Khách mở danh sách khách đang hoạt động (tìm kiếm, sắp xếp, xuất CSV); "Xem mọi nhánh của từng yếu tố" mở đủ 13 yếu tố.
+- **Chi tiết khi cần:** hai nút ở chân panel: "Danh sách khách" (khách đang hoạt động trong nhóm; tìm kiếm, sắp xếp, xuất CSV) và "Mọi nhánh" (đủ 13 yếu tố).
 
 ## 3. Mỗi hình trả lời một câu hỏi
 

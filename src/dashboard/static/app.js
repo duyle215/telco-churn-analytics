@@ -197,7 +197,10 @@
             <div class="viz-answer" id="exTopAnswer"></div></div></div>
           <div class="active-filters" id="exActive"></div>
           <div class="top-factors" id="exTop"></div>
-          <button class="btn block no-print" id="exAll" type="button">Xem mọi nhánh của từng yếu tố</button>
+          <div class="panel-actions no-print">
+            <button class="btn" id="exAll" type="button">Mọi nhánh</button>
+            <button class="btn" id="exCustomers" type="button">${ICON.download}Danh sách khách</button>
+          </div>
         </div>
         ${viz('ex-contract', 'Loại hợp đồng nào dễ rời đi nhất?', 'v-b1')}
         ${viz('ex-tenure', 'Khách thường rời đi ở giai đoạn nào?', 'v-b2')}
@@ -220,7 +223,7 @@
       if (b) openPopover(b.dataset.pop, b);
     });
     $('#exClear').addEventListener('click', () => { ex.filters = {}; onFiltersChanged(); });
-    $('#exKpis').addEventListener('click', (e) => { if (e.target.closest('#exCustomers')) openCustomerList(); });
+    $('#exCustomers').addEventListener('click', openCustomerList);
     $('#exAll').addEventListener('click', openAllFactors);
     const toggleFromEl = (e) => {
       const v = e.target.closest('[data-f]');
@@ -362,7 +365,7 @@
 
     // Một dòng tóm tắt quy mô nhóm; câu trả lời chi tiết nằm ở từng hình, không lặp lại ở đây.
     const who = filtered ? `Nhóm ${fmt.int(k.sel_customers)} khách` : 'Toàn công ty';
-    $('#exHeadline').innerHTML = `${ICON.bulb}<span>${who}: <b>${fmt.pct(selRate)}</b> đã rời đi trong 24 tháng${filtered ? `, ${lift >= 1 ? 'gấp' : 'bằng'} <b>${fmt.num(lift, lift >= 1 ? 1 : 2)} lần</b> mức chung (${fmt.pct(allRate)})` : ''}.</span>`
+    $('#exHeadline').innerHTML = `${ICON.bulb}<span>${who}: <b>${fmt.pct(selRate)}</b> đã rời đi trong 24 tháng${filtered ? `, ${lift >= 1 ? 'gấp' : 'bằng'} <b>${fmt.num(lift, lift >= 1 ? 1 : 2)} lần</b> mức chung (${fmt.pct(allRate)})` : ''}. <span class="muted">Các thẻ: tháng ${d.trend[d.trend.length - 1].year_month.slice(5)}/${d.trend[d.trend.length - 1].year_month.slice(0, 4)} so với tháng trước.</span></span>`
       + (k.sel_customers < 100 ? badge('warn', 'mẫu nhỏ') : '');
 
     const t = d.trend, last = t[t.length - 1], prev = t[t.length - 2];
@@ -371,24 +374,36 @@
       if (cur == null || before == null || (!pp && !before)) return '';
       const diff = pp ? cur - before : cur / before - 1;
       const bad = upIsBad ? diff > 0 : diff < 0;
-      const text = pp ? `${diff >= 0 ? '+' : '−'}${fmt.num(Math.abs(diff) * 100, 2)} điểm` : fmt.pct(diff, 1);
+      const sign = diff >= 0 ? '+' : '−';
+      const text = pp ? `${sign}${fmt.num(Math.abs(diff) * 100, 2)} điểm` : `${sign}${fmt.pct(Math.abs(diff), 1)}`;
       const flat = Math.abs(diff) < (pp ? 0.00005 : 0.0005);   // dưới mức làm tròn hiển thị thì coi như không đổi
       return badge(flat ? 'neutral' : bad ? 'bad' : 'good', text, flat ? null : diff >= 0 ? 'up' : 'down');
     };
+    /*
+      5 thẻ cùng một khuôn: giá trị = tháng gần nhất, nhãn = thay đổi so với tháng trước (màu theo ý nghĩa:
+      khách/MRR/ARPU tăng là tốt; tỷ lệ rời đi/MRR mất tăng là xấu), sparkline = 24 tháng của chính chỉ số đó,
+      dòng chân = so với toàn công ty (khi lọc) hoặc chỉ tiêu / bình quân (khi xem toàn công ty).
+    */
     const s1 = css('--series-1'), crit = css('--critical'), s2 = css('--series-2');
+    const arpu = (r) => (r.sel_customers ? r.sel_mrr / r.sel_customers : null);
+    const allRateLast = last.all_customers ? last.all_churners / last.all_customers : 0;
+    const avgSelRate = sum(t, (r) => r.sel_churners) / Math.max(1, sum(t, (r) => r.sel_customers));
     $('#exKpis').innerHTML = [
-      kpiSpark('Khách trong nhóm', fmt.int(k.sel_customers), '',
-        `${filtered ? fmt.pct(k.sel_customers / k.all_customers) + ' công ty · ' : ''}<button type="button" class="inline-link" id="exCustomers">Xem danh sách ›</button>`,
+      kpiSpark('Khách đang có', fmt.int(last.sel_customers), deltaBadge(last.sel_customers, prev.sel_customers),
+        filtered ? `${fmt.pct(last.sel_customers / last.all_customers)} khách công ty` : `24 tháng: ${fmt.int(k.all_customers)} khách có tính cước`,
         sparkline(t.map((r) => r.sel_customers), s1)),
-      kpiSpark('Đã rời đi (24 tháng)', fmt.pct(selRate),
-        filtered ? badge(lift > 1.05 ? 'bad' : lift < 0.95 ? 'good' : 'neutral', '×' + fmt.num(lift, 2), lift > 1.05 ? 'up' : lift < 0.95 ? 'down' : null) : '',
-        `${fmt.int(k.sel_churners)} khách${filtered ? ` · chung ${fmt.pct(allRate)}` : ''}`, ''),
-      kpiSpark(`Rời đi tháng ${last.year_month.slice(5)}/${last.year_month.slice(0, 4)}`, rate(last) == null ? '–' : fmt.pct(rate(last), 2),
-        deltaBadge(rate(last), rate(prev), { pp: true, upIsBad: true }), 'so với tháng trước', sparkline(t.map(rate), crit)),
-      kpiSpark('MRR tháng gần nhất', fmt.usd(last.sel_mrr), deltaBadge(last.sel_mrr, prev.sel_mrr),
-        filtered ? `${fmt.pct(k.all_mrr ? selMrr / k.all_mrr : 0)} MRR công ty` : 'so với tháng trước', sparkline(t.map((r) => r.sel_mrr), s1)),
-      kpiSpark('MRR dự kiến mất / tháng', fmt.usd(selLoss), '', `24 tháng qua đã mất ${fmt.usd(sum(t, (r) => r.sel_mrr_lost))}`,
+      kpiSpark('Tỷ lệ rời đi', rate(last) == null ? '–' : fmt.pct(rate(last), 2), deltaBadge(rate(last), rate(prev), { pp: true, upIsBad: true }),
+        filtered ? `Công ty ${fmt.pct(allRateLast, 2)} · bình quân nhóm ${fmt.pct(avgSelRate, 2)}` : `Chỉ tiêu ${fmt.pct(last.churn_rate_target || 0, 2)} · bình quân ${fmt.pct(avgSelRate, 2)}`,
+        sparkline(t.map(rate), crit)),
+      kpiSpark('MRR', fmt.usd(last.sel_mrr), deltaBadge(last.sel_mrr, prev.sel_mrr),
+        filtered ? `${fmt.pct(last.all_mrr ? last.sel_mrr / last.all_mrr : 0)} MRR công ty` : `Chỉ tiêu ${fmt.usd(last.mrr_target_usd || 0)}`,
+        sparkline(t.map((r) => r.sel_mrr), s1)),
+      kpiSpark('MRR mất do rời đi', fmt.usd(last.sel_mrr_lost), deltaBadge(last.sel_mrr_lost, prev.sel_mrr_lost, { upIsBad: true }),
+        `Dự kiến ${fmt.usd(selLoss)}/tháng · 24 tháng ${fmt.usd(sum(t, (r) => r.sel_mrr_lost))}`,
         sparkline(t.map((r) => r.sel_mrr_lost), s2)),
+      kpiSpark('ARPU', arpu(last) == null ? '–' : fmt.usd2(arpu(last)), deltaBadge(arpu(last), arpu(prev)),
+        filtered ? `Công ty ${fmt.usd2(last.all_customers ? last.all_mrr / last.all_customers : 0)}` : `Đầu kỳ ${fmt.usd2(arpu(t[0]) || 0)}`,
+        sparkline(t.map(arpu), s1)),
     ].join('');
 
     // Hàng "Đang lọc" trong panel: bỏ chọn ngay tại chỗ, không phải tìm lại nút ở thanh lọc.
